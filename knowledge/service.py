@@ -23,23 +23,26 @@ from models.knowledge import KnowledgeEntry, KnowledgeType
 
 _EXTRACT_SYSTEM = """\
 你是 API 知识管理专家。根据已完成的 API 文档和断言规则，提取可复用的模式知识。
+请穷尽式提取，每个字段、每个断言都应考虑是否能形成可复用模式。典型每 API 提取 5-15 条。
 
 提取类型：
-- field_pattern: 字段命名/语义约定（如 token→JWT认证头、code→业务状态码）
-- assertion_pattern: 可复用断言规则（如"列表接口必须断言$.data.total"）
-- doc_pattern: 文档编写约定（如"RESTful删除接口响应为{code,message}"）
-- scenario_pattern: 场景流程模式（如"CRUD标准流程:创建→查询→更新→删除"）
+- field_pattern: 字段命名/语义约定（如 token→JWT认证头、code→业务状态码、status字段枚举值约定）
+- assertion_pattern: 可复用断言规则（如"列表接口必须断言$.data.total"、"状态码必须为200"）
+- doc_pattern: 文档编写约定（如"RESTful删除接口响应为{code,message}"、"分页接口必须说明page/pageSize"）
+- scenario_pattern: 场景流程模式（如"CRUD标准流程:创建→查询→更新→删除"、"认证→授权→业务"）
 
-每项输出格式：{"type":"...", "title":"简短标题", "content":"详细说明", "tags":["关键词"]}
+每项输出格式：{"type":"...", "title":"简短标题（15字内）", "content":"详细说明（含字段名、类型、约束）", "tags":["关键词"]}
 仅输出 JSON 数组，不要 markdown 围栏。"""
 
 _EXTRACT_USER = """\
 项目={project_id}
 路径={method} {path}
-文档={summary}
-参数={params}
-响应字段={response_fields}
-断言={asserts}"""
+API摘要={summary}
+请求参数(name/type/desc/req)={params}
+响应字段(name/type/desc/req)={response_fields}
+断言规则(field/operator/description)={asserts}
+
+请从上述 API 文档中穷尽式提取所有可复用的模式知识。"""
 
 
 class KnowledgeService:
@@ -59,17 +62,29 @@ class KnowledgeService:
         if type and type in [t.value for t in KnowledgeType]:
             # 类型筛选仅接受合法的 KnowledgeType 枚举值，无效类型忽略（等价于不过滤）
             filt["type"] = type
+        # 搜索模式：优先用 MongoDB $text（需 text index），缺失索引时回退到 regex
+        use_text_search = False
         if search:
-            # 用 MongoDB text 搜索 title 和 content
+            use_text_search = True
             filt["$text"] = {"$search": search}
 
-        total = await self._col.count_documents(filt)
-        cursor = self._col.find(filt)
-        # text 搜索时按相关性排序，否则按更新时间降序
-        if search:
-            cursor = cursor.sort([("score", {"$meta": "textScore"})])
-        else:
-            cursor = cursor.sort([("updated_at", -1)])
+        try:
+            total = await self._col.count_documents(filt)
+            cursor = self._col.find(filt)
+            if use_text_search:
+                cursor = cursor.sort([("score", {"$meta": "textScore"})])
+            else:
+                cursor = cursor.sort([("updated_at", -1)])
+        except Exception:
+            # text index 缺失，回退到 regex 模糊搜索
+            if use_text_search:
+                del filt["$text"]
+                regex = {"$regex": search, "$options": "i"}
+                filt["$or"] = [{"title": regex}, {"content": regex}]
+                total = await self._col.count_documents(filt)
+                cursor = self._col.find(filt).sort([("updated_at", -1)])
+            else:
+                raise
         items = await cursor.skip(skip).limit(limit).to_list(length=limit)
         # 将 MongoDB ObjectId 转为字符串，便于 JSON 序列化
         for item in items:
@@ -155,9 +170,12 @@ class KnowledgeService:
         result = await self._col.delete_one({"id": entry_id})
         return result.deleted_count > 0
 
-    async def batch_delete(self, ids: list[str]) -> int:
-        """批量删除记忆条目，返回删除数量"""
-        result = await self._col.delete_many({"id": {"$in": ids}})
+    async def batch_delete(self, ids: list[str], project_id: str | None = None) -> int:
+        """批量删除记忆条目，返回删除数量。传入 project_id 时仅删除该项目下的条目，防止跨项目误删。"""
+        filt: dict[str, Any] = {"id": {"$in": ids}}
+        if project_id:
+            filt["project_id"] = project_id
+        result = await self._col.delete_many(filt)
         return result.deleted_count
 
     # ── 多维检索（分析前调用） ────────────────────────────
@@ -311,8 +329,9 @@ class KnowledgeService:
         method = request.get("method", "")
         path = request.get("path", "")
         summary = api_doc.get("summary", "")
-        params = [p.get("name", "") for p in api_doc.get("params", [])]
-        response_fields = [p.get("name", "") for p in api_doc.get("response_fields", [])]
+        # 提取字段完整信息（name+type+desc），确保 LLM 有足够上下文提取模式
+        params = [{"name": p.get("name",""), "type": p.get("type",""), "desc": p.get("description",""), "req": p.get("required", False)} for p in api_doc.get("params", [])]
+        response_fields = [{"name": p.get("name",""), "type": p.get("type",""), "desc": p.get("description",""), "req": p.get("required", False)} for p in api_doc.get("response_fields", [])]
         asserts_str = json.dumps([
             {"field": a.get("field", ""), "operator": a.get("operator", ""), "description": a.get("description", "")}
             for a in asserts
@@ -384,10 +403,10 @@ class KnowledgeService:
         分批处理（每批 3 个并发），通过 WebSocket 广播进度。
         完成后自动触发 consolidate。
         """
-        # 查询项目下所有 analysis_status == DONE 的 API
+        # 查询项目下所有已分析完成的 API（兼容旧数据 done 和新数据 applied）
         docs = await self._db["api_dsls"].find({
             "project_id": project_id,
-            "analysis_status": "done",
+            "analysis_status": {"$in": ["done", "applied"]},
         }).to_list(length=1000)
         if not docs:
             # 项目下无已完成分析的 API → 直接返回零结果

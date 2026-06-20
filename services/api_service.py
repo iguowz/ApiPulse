@@ -3,6 +3,7 @@ API DSL 服务层 —— 查询构建、执行编排、断言管理
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -76,9 +77,11 @@ class ApiService:
         mongo_sort_field = sort_field_map.get(sort_by, "created_at")
         direction = -1 if sort_order == "desc" else 1
 
-        docs = await self.db["api_dsls"].find(q, {"_id": 0}).sort(mongo_sort_field, direction).skip(skip).limit(limit).to_list(limit)
+        # find() 与 count_documents() 互不依赖，并行执行减少延迟
+        docs_task = self.db["api_dsls"].find(q, {"_id": 0}).sort(mongo_sort_field, direction).skip(skip).limit(limit).to_list(limit)
+        count_task = self.db["api_dsls"].count_documents(q)
+        docs, total = await asyncio.gather(docs_task, count_task)
         await self._attach_quality_profiles(docs)
-        total = await self.db["api_dsls"].count_documents(q)
         return {"total": total, "items": docs}
 
     async def get_api(self, api_id: str) -> dict[str, Any]:
@@ -555,11 +558,16 @@ class ApiService:
             return {**target, **merged}
         return node
 
+    _schema_visiting: set[int] = set()  # 深度限制防 $ref 循环（OpenAPI 自引用场景）
+
     @classmethod
-    def _schema_example(cls, schema: dict[str, Any]) -> Any:
+    def _schema_example(cls, schema: dict[str, Any], spec: dict[str, Any] | None = None, depth: int = 0) -> Any:
         """按 JSON Schema/OpenAPI Schema 生成一个最小可读示例。"""
-        if not isinstance(schema, dict):
+        if not isinstance(schema, dict) or depth > 10:
             return None
+        # 解析嵌套 $ref（支持 properties/items/allOf 中的引用，带深度限制防循环）
+        if "$ref" in schema and spec is not None:
+            schema = cls._resolve_ref(spec, schema)
         if "example" in schema:
             return schema["example"]
         if "default" in schema:
@@ -569,21 +577,21 @@ class ApiService:
         if schema.get("allOf"):
             merged: dict[str, Any] = {}
             for part in schema.get("allOf") or []:
-                value = cls._schema_example(part if isinstance(part, dict) else {})
+                value = cls._schema_example(part if isinstance(part, dict) else {}, spec, depth + 1)
                 if isinstance(value, dict):
                     merged.update(value)
             return merged
         if schema.get("oneOf") or schema.get("anyOf"):
             options = schema.get("oneOf") or schema.get("anyOf") or []
-            return cls._schema_example(options[0] if options else {})
+            return cls._schema_example(options[0] if options else {}, spec, depth + 1)
 
         schema_type = schema.get("type")
         if not schema_type and schema.get("properties"):
             schema_type = "object"
         if schema_type == "object":
-            return {str(k): cls._schema_example(v if isinstance(v, dict) else {}) for k, v in (schema.get("properties") or {}).items()}
+            return {str(k): cls._schema_example(v if isinstance(v, dict) else {}, spec, depth + 1) for k, v in (schema.get("properties") or {}).items()}
         if schema_type == "array":
-            return [cls._schema_example(schema.get("items") if isinstance(schema.get("items"), dict) else {})]
+            return [cls._schema_example(schema.get("items") if isinstance(schema.get("items"), dict) else {}, spec, depth + 1)]
         defaults = {
             "integer": 0,
             "number": 0,

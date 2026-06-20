@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -36,26 +37,33 @@ class StatsService:
         """项目全局概览：API/场景/执行/监控/告警/LLM 统计"""
         pq = {"project_id": project_id}
 
-        # 并行计数：分 5 组执行以减少串行等待
-        total_apis = await self.db["api_dsls"].count_documents(pq)
-        status_done = await self.db["api_dsls"].count_documents({**pq, "analysis_status": {"$in": ["applied", "done"]}})
-        status_run = await self.db["api_dsls"].count_documents({**pq, "analysis_status": "running"})
-        status_queue = await self.db["api_dsls"].count_documents({**pq, "analysis_status": "queued"})
-        status_fail = await self.db["api_dsls"].count_documents({**pq, "analysis_status": "failed"})
-        status_idle = await self.db["api_dsls"].count_documents({**pq, "analysis_status": "idle"})
-        total_scenarios = await self.db["scenarios"].count_documents(pq)
-        ai_scenarios = await self.db["scenarios"].count_documents({**pq, "ai_generated": True})
-        scenario_draft = await self.db["scenarios"].count_documents({**pq, "status": "draft"})
-        scenario_ready = await self.db["scenarios"].count_documents({**pq, "status": "ready"})
-        scenario_done = await self.db["scenarios"].count_documents({**pq, "status": "done"})
-        scenario_failed = await self.db["scenarios"].count_documents({**pq, "status": "failed"})
-        total_execs = await self.db["executions"].count_documents(pq)
-        passed_execs = await self.db["executions"].count_documents({**pq, "passed": True})
-        execs_single = await self.db["executions"].count_documents({**pq, "type": "single"})
-        execs_scenario = await self.db["executions"].count_documents({**pq, "type": "scenario"})
-        execs_monitor = await self.db["executions"].count_documents({**pq, "type": "monitor"})
-        active_monitors = await self.db["monitors"].count_documents({**pq, "enabled": True})
-        total_alerts = await self.db["alert_records"].count_documents(pq)
+        # 并行计数：asyncio.gather 同时发起所有独立查询，将 19 次串行等待合并为 1 轮
+        (
+            total_apis, status_done, status_run, status_queue, status_fail, status_idle,
+            total_scenarios, ai_scenarios, scenario_draft, scenario_ready, scenario_done, scenario_failed,
+            total_execs, passed_execs, execs_single, execs_scenario, execs_monitor,
+            active_monitors, total_alerts,
+        ) = await asyncio.gather(
+            self.db["api_dsls"].count_documents(pq),
+            self.db["api_dsls"].count_documents({**pq, "analysis_status": {"$in": ["applied", "done"]}}),
+            self.db["api_dsls"].count_documents({**pq, "analysis_status": "running"}),
+            self.db["api_dsls"].count_documents({**pq, "analysis_status": "queued"}),
+            self.db["api_dsls"].count_documents({**pq, "analysis_status": "failed"}),
+            self.db["api_dsls"].count_documents({**pq, "analysis_status": "idle"}),
+            self.db["scenarios"].count_documents(pq),
+            self.db["scenarios"].count_documents({**pq, "ai_generated": True}),
+            self.db["scenarios"].count_documents({**pq, "status": "draft"}),
+            self.db["scenarios"].count_documents({**pq, "status": "ready"}),
+            self.db["scenarios"].count_documents({**pq, "status": "done"}),
+            self.db["scenarios"].count_documents({**pq, "status": "failed"}),
+            self.db["executions"].count_documents(pq),
+            self.db["executions"].count_documents({**pq, "passed": True}),
+            self.db["executions"].count_documents({**pq, "type": "single"}),
+            self.db["executions"].count_documents({**pq, "type": "scenario"}),
+            self.db["executions"].count_documents({**pq, "type": "monitor"}),
+            self.db["monitors"].count_documents({**pq, "enabled": True}),
+            self.db["alert_records"].count_documents(pq),
+        )
 
         # AI Jobs 聚合：按 type + status 分组统计（场景/巡检 AI 生成任务状态分布）
         ai_jobs_pipeline = [

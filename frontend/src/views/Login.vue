@@ -7,48 +7,47 @@
         <p class="subtitle">API Quality Platform</p>
       </div>
 
-      <!-- 登录/注册切换 tab -->
       <div class="login-tabs">
         <button
           :class="{ active: mode === 'login' }"
-          @click="mode = 'login'"
-        >登录</button>
+          @click="switchMode('login')"
+        >{{ $t('auth.login') }}</button>
         <button
           :class="{ active: mode === 'register' }"
-          @click="mode = 'register'"
-        >注册</button>
+          @click="switchMode('register')"
+        >{{ $t('auth.register') }}</button>
       </div>
 
       <el-form
         ref="formRef"
         :model="form"
+        :rules="rules"
         label-position="top"
         @keyup.enter="submit"
       >
-        <el-form-item label="用户名" required>
+        <el-form-item :label="$t('auth.username')" prop="username">
           <el-input
             v-model="form.username"
-            placeholder="请输入用户名"
+            :placeholder="$t('auth.username')"
             autocomplete="username"
           />
         </el-form-item>
 
-        <el-form-item label="密码" required>
+        <el-form-item :label="$t('auth.password')" prop="password">
           <el-input
             v-model="form.password"
             type="password"
-            placeholder="请输入密码"
+            :placeholder="$t('auth.password')"
             show-password
             autocomplete="current-password"
           />
         </el-form-item>
 
-        <!-- 注册模式额外字段 -->
         <template v-if="mode === 'register'">
-          <el-form-item label="显示名称">
+          <el-form-item :label="$t('auth.displayName')" prop="display_name">
             <el-input
               v-model="form.display_name"
-              placeholder="可选，默认同用户名"
+              :placeholder="$t('auth.displayNameOptional')"
             />
           </el-form-item>
         </template>
@@ -59,31 +58,34 @@
           :loading="submitting"
           @click="submit"
         >
-          {{ mode === 'login' ? '登录' : '注册' }}
+          {{ mode === 'login' ? $t('auth.login') : $t('auth.register') }}
         </el-button>
       </el-form>
 
       <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
 
       <p class="login-hint">
-        默认管理员: admin / admin123
+        {{ $t('auth.defaultAdminHint') }}
       </p>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 
+const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 
-const mode = ref('login')          // 'login' | 'register'
+const mode = ref('login')
 const submitting = ref(false)
 const errorMsg = ref('')
+const formRef = ref(null)
 
 const form = reactive({
   username: '',
@@ -91,13 +93,31 @@ const form = reactive({
   display_name: '',
 })
 
-async function submit() {
-  if (!form.username || !form.password) {
-    errorMsg.value = '请填写用户名和密码'
-    return
+// 根据当前模式动态切换验证规则：注册时需要用户名、密码（≥6位），登录时只需非空
+const rules = computed(() => {
+  const base = {
+    username: [{ required: true, message: t('auth.fillRequired'), trigger: 'blur' }],
+    password: [{ required: true, message: t('auth.fillRequired'), trigger: 'blur' }],
   }
-  if (mode.value === 'register' && form.password.length < 6) {
-    errorMsg.value = '密码至少 6 位'
+  if (mode.value === 'register') {
+    base.password.push({ min: 6, message: t('auth.passwordMinLength'), trigger: 'blur' })
+  }
+  return base
+})
+
+// 切换登录/注册模式时清空错误和表单验证
+function switchMode(m) {
+  mode.value = m
+  errorMsg.value = ''
+  formRef.value?.clearValidate()
+}
+
+async function submit() {
+  // Element Plus 表单验证（替代手工 if 校验）
+  try {
+    await formRef.value?.validate()
+  } catch {
+    // 验证不通过时 el-form 已展示内联错误，无需额外提示
     return
   }
 
@@ -113,14 +133,12 @@ async function submit() {
         password: form.password,
         display_name: form.display_name,
       })
-      // 注册成功后自动登录
       await authStore.login(form.username, form.password)
     }
-    // 登录成功，跳转到原来想访问的页面或 dashboard
     const redirect = route.query.redirect || '/dashboard'
     router.replace(redirect)
   } catch (e) {
-    errorMsg.value = e.message || '操作失败'
+    errorMsg.value = e.message || t('auth.operationFailed')
   } finally {
     submitting.value = false
   }

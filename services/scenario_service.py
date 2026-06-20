@@ -197,9 +197,9 @@ class ScenarioService:
         r = await self.db["scenarios"].delete_one(self._project_query(project_id, {"id": scenario_id}))
         return r.deleted_count > 0
 
-    async def batch_delete_scenarios(self, ids: list[str], project_id: str) -> int:
-        """批量删除场景；返回删除数量"""
-        r = await self.db["scenarios"].delete_many(self._project_query(project_id, {"id": {"$in": ids}}))
+    async def batch_delete_scenarios(self, ids: list[str]) -> int:
+        """批量删除场景；返回删除数量。调用方须预先校验每个 ID 的项目访问权限。"""
+        r = await self.db["scenarios"].delete_many({"id": {"$in": ids}})
         return r.deleted_count
 
     # ── 校验与运行前规范化 ─────────────────────────────────

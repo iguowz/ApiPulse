@@ -73,7 +73,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores'
 
@@ -295,12 +295,6 @@ async function clearHistory() {
   sessionId.value = ''
 }
 
-// 监听上下文变化时清空（避免跨页面上下文混淆）
-watch(() => route.path, () => {
-  if (visible.value && messages.value.length) {
-    // 不自动清空，保留对话连续性
-  }
-})
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)

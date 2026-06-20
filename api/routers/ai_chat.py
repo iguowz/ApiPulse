@@ -25,6 +25,7 @@ from openai import AsyncOpenAI, APIError, RateLimitError
 from config.database import get_db, get_redis
 from config.settings import get_settings
 from api.deps import _get_user_from_request, ensure_project_access, user_has_permission, visible_project_id
+from api.state import _memory_service
 from services.llm_config_service import resolve_llm_config
 from models.generation_version import (
     GenerationSource,
@@ -97,11 +98,14 @@ async def chat(
 
     async def event_stream():
         """SSE 流式生成器。"""
+        memory = _get_memory()
         try:
-            # 1. 加载对话上下文
+            # 1. 加载对话上下文（优先 MemoryService L4，降级到原始 Redis）
             ctx_key = f"{CHAT_CTX_PREFIX}:{user_id}:{session_id}"
-            ctx_raw = await redis.get(ctx_key)
-            history = json.loads(ctx_raw) if ctx_raw else []
+            history = await memory.get_l4(user_id, session_id) if memory else []
+            if not history:
+                ctx_raw = await redis.get(ctx_key)
+                history = json.loads(ctx_raw) if ctx_raw else []
 
             # 2. 构建消息列表（system + history + 页面上下文 + 当前消息）
             system_prompt = _build_system_with_context(_CHAT_SYSTEM, context, db)
@@ -111,8 +115,8 @@ async def chat(
                 "回答必须基于工具结果，数据不足时说明缺口，不要编造。"
             )
             messages = [{"role": "system", "content": system_prompt}]
-            # 历史对话（仅 role/content，截断避免 token 爆炸）
-            for h in history[-CHAT_CTX_MAX_ROUNDS*2:]:  # 每轮 2 条（user+assistant）
+            # 历史对话（仅 role/content，截断避免 token 爆炸；pre_reasoning 会进一步智能压缩）
+            for h in history[-CHAT_CTX_MAX_ROUNDS*2:]:
                 messages.append({"role": h["role"], "content": h["content"][:2000]})
             messages.append({"role": "user", "content": message})
 
@@ -145,6 +149,19 @@ async def chat(
             for event in tool_events:
                 yield _sse(event)
 
+            # 4b. 工具结果智能压缩（替代原有 content[:12000] 硬截断，
+            #     近期结果保留完整 ~100KB，旧结果自动截断至 ~3KB 摘要）
+            if memory and memory._available:
+                messages = await memory.compact_tool_results(messages)
+
+            # 4c. ReMe pre-reasoning：压缩早期上下文 + 注入跨会话语义记忆
+            #     解决原有 history[-N*2:] 粗暴丢弃早期上下文的问题
+            if memory and memory._available:
+                messages, _ = await memory.pre_reasoning(
+                    messages,
+                    system_prompt=system_prompt,
+                )
+
             # 5. 流式调用 LLM，保持前端现有 ReadableStream + SSE 解析方式不变。
             full_response_parts = []
             stream = await client.chat.completions.create(
@@ -160,7 +177,7 @@ async def chat(
                     full_response_parts.append(delta.content)
                     yield _sse({"type": "delta", "content": delta.content})
 
-            # 6. 保存对话到上下文
+            # 6. 保存对话到上下文（优先 MemoryService L4）
             full_response = "".join(full_response_parts)
             generation_event = await _create_chat_generation_if_needed(
                 db=db,
@@ -176,11 +193,13 @@ async def chat(
                 yield _sse(generation_event)
             history.append({"role": "user", "content": message})
             history.append({"role": "assistant", "content": full_response})
-            # 截断到最近 N 轮，避免无限增长
             history = history[-CHAT_CTX_MAX_ROUNDS*2:]
-            await redis.setex(ctx_key, CHAT_CTX_TTL, json.dumps(history, ensure_ascii=False))
+            await _save_history(memory, redis, ctx_key, user_id, session_id, history)
 
-            # 7. 发送完成事件
+            # 7. 快照会话到 L3（含回退摘要），使记忆模块有内容可查
+            await _save_l3_snapshot(memory, user_id, session_id, visible_project_id(user, context.get("project_id")), history)
+
+            # 8. 发送完成事件
             yield _sse({"type": "done", "session_id": session_id})
 
         except (RateLimitError, APIError) as e:
@@ -206,15 +225,17 @@ async def get_chat_history(
     session_id: str,
     request: Request = None,
 ):
-    """获取指定会话的对话历史。"""
+    """获取指定会话的对话历史（优先 L4，降级 Redis）。"""
     user = _get_user_from_request(request) or {}
     user_id = user.get("username", "anonymous")
-    redis = await get_redis()
-    ctx_key = f"{CHAT_CTX_PREFIX}:{user_id}:{session_id}"
-    ctx_raw = await redis.get(ctx_key)
-    if not ctx_raw:
-        return {"history": [], "session_id": session_id}
-    return {"history": json.loads(ctx_raw), "session_id": session_id}
+    memory = _get_memory()
+    history = await memory.get_l4(user_id, session_id) if memory else []
+    if not history:
+        redis = await get_redis()
+        ctx_key = f"{CHAT_CTX_PREFIX}:{user_id}:{session_id}"
+        ctx_raw = await redis.get(ctx_key)
+        history = json.loads(ctx_raw) if ctx_raw else []
+    return {"history": history, "session_id": session_id}
 
 
 @router.delete("/ai/chat/history/{session_id}")
@@ -222,9 +243,15 @@ async def clear_chat_history(
     session_id: str,
     request: Request = None,
 ):
-    """清除指定会话的对话历史。"""
+    """清除指定会话的对话历史（先归档 L3 → 再清 L4 + Redis）。"""
     user = _get_user_from_request(request) or {}
     user_id = user.get("username", "anonymous")
+    memory = _get_memory()
+    if memory:
+        # 先将会话归档到 L3，避免丢失对话记录
+        await memory.end_session(user_id, session_id, "default")
+        # 清 L4
+        await memory.delete_l4(user_id, session_id)
     redis = await get_redis()
     ctx_key = f"{CHAT_CTX_PREFIX}:{user_id}:{session_id}"
     await redis.delete(ctx_key)
@@ -888,3 +915,34 @@ def _build_system_with_context(base_system: str, context: dict, db: AsyncIOMotor
 def _sse(data: dict) -> str:
     """格式化为 SSE 事件行。"""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _get_memory():
+    """获取 MemoryService 实例（可能为 None）。"""
+    try:
+        return _memory_service
+    except Exception:
+        return None
+
+
+async def _save_history(memory, redis, ctx_key: str, user_id: str, session_id: str,
+                        history: list[dict[str, Any]]) -> None:
+    """保存对话历史：优先 MemoryService L4，同时写 Redis 作为降级备份。"""
+    if memory:
+        await memory.set_l4(user_id, session_id, history, ttl=CHAT_CTX_TTL)
+    # 双写 Redis 作为降级路径（MemoryService 不可用时仍可读取历史）
+    await redis.setex(ctx_key, CHAT_CTX_TTL, json.dumps(history, ensure_ascii=False))
+
+
+async def _save_l3_snapshot(memory, user_id: str, session_id: str,
+                            project_id: str, history: list[dict[str, Any]]) -> None:
+    """将对话快照写入 L3 会话记忆，使记忆模块可检索本次对话记录。
+
+    MemoryService 不可用或摘要生成失败时静默降级，不影响主流程。
+    """
+    if not memory or not history:
+        return
+    try:
+        await memory.save_session_to_l3(user_id, session_id, project_id, history)
+    except Exception as e:
+        logger.warning("Failed to save L3 snapshot for session {}: {}", session_id, e)

@@ -3,12 +3,38 @@ ai_analyzer 共享工具函数
 """
 from __future__ import annotations
 
+import asyncio
 import ast
 import json
 import re
-from typing import Any
+from typing import Any, Coroutine
 
 from loguru import logger
+
+
+def safe_fire_and_forget(coro: Coroutine, name: str = "") -> None:
+    """
+    安全地触发 fire-and-forget 协程：异常通过 add_done_callback 记录到日志，
+    而非静默吞没。适用于 memory.record_l2、knowledge.extract 等不影响主流程的
+    辅助任务。
+    """
+    task = asyncio.create_task(coro)
+    task.add_done_callback(_log_task_exception(name))
+    # 不返回 task，调用方无需管理
+
+
+def _log_task_exception(name: str):
+    """返回一个 done_callback，仅在 task 以异常结束时记录日志"""
+    tag = f"fire-and-forget:{name}" if name else "fire-and-forget"
+
+    def _callback(task: asyncio.Task):
+        try:
+            task.result()  # 如果内部抛异常，这里会重新抛出
+        except asyncio.CancelledError:
+            logger.debug("[{}] task cancelled", tag)
+        except Exception:
+            logger.exception("[{}] task failed with unhandled exception", tag)
+    return _callback
 
 
 def safe_parse_json(text: str) -> Any:

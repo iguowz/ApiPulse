@@ -91,7 +91,7 @@
               <span v-else class="text-3">—</span>
             </template>
           </el-table-column>
-          <el-table-column :label="$t('common.actions')" width="300">
+          <el-table-column :label="$t('common.actions')" width="350">
             <template #default="{ row }">
               <div class="flex items-center gap-8">
                 <el-tag v-if="runJobs[row.id]" size="small" :type="runJobs[row.id].status === 'passed' ? 'success' : runJobs[row.id].status === 'failed' ? 'danger' : 'warning'">

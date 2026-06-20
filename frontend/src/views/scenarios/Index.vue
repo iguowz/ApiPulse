@@ -350,8 +350,9 @@ async function batchDelete() {
     // ElMessageBox.confirm：确定→resolve，取消→reject('cancel')，关闭→reject('close')
     await ElMessageBox.confirm(t('scenarios.confirm_batch_delete', { n: selectedIds.value.length }), t('scenarios.confirm_delete_title'), { type: 'warning' })
     // 将响应式数组转为纯数组传递，避免 Vue Proxy 序列化问题
-    await scenarioApi.batchDelete([...selectedIds.value])
-    toast.success(t('scenarios.deleted'))
+    const r = await scenarioApi.batchDelete([...selectedIds.value])
+    // 检查后端实际删除数量，避免 deleted_count=0 时仍提示成功
+    toast.success(t('scenarios.batch_delete_done', { count: r.deleted_count }))
     selectedIds.value = []
     load()
   } catch (e) {

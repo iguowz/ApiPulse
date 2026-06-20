@@ -27,6 +27,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from redis.asyncio import Redis
 from openai import AsyncOpenAI, APIError, RateLimitError
 
+from ai_analyzer.utils import safe_fire_and_forget
+
 from config.settings import get_settings
 from services.ai_job_service import AiJobService
 from services.llm_config_service import resolve_llm_config
@@ -63,10 +65,12 @@ _ALERT_SYSTEM = """\
 class AlertAnalyzerService:
     """AI 告警分析服务 —— 异步消费 queue:alert_analyze。"""
 
-    def __init__(self, db: AsyncIOMotorDatabase, redis: Redis, ws_manager=None):
+    def __init__(self, db: AsyncIOMotorDatabase, redis: Redis, ws_manager=None,
+                 memory=None):  # P5: MemoryService | None，4-tier 记忆服务
         self._db = db
         self._redis = redis
         self._ws = ws_manager
+        self._memory = memory  # P5: L2 项目记忆记录，None 时静默跳过
         self._client: AsyncOpenAI | None = None
         self._model = ""
         self._temperature = 0.1
@@ -265,6 +269,20 @@ class AlertAnalyzerService:
             source="alert_analyzer",
             target_ids=[alert_id],
         )
+        # P5: 记录 L2 项目记忆（fire-and-forget，告警分析结论持久化）
+        memory = getattr(self, "_memory", None)
+        if memory is not None:
+            alert_title = alert_doc.get("title", alert_id)
+            safe_fire_and_forget(
+                memory.record_l2(
+                    project_id, "alert_assessment",
+                    f"告警评估: {alert_title[:80]}",
+                    f"严重度={assessment['severity']}，置信度={assessment['confidence']:.0%}，根因={assessment['root_cause']}",
+                    tags=["alert", assessment["severity"]],
+                    source="alert_analyzer",
+                ),
+                name="memory.record_l2:alert_assessment",
+            )
         return True
 
     def _build_user_prompt(self, alert_doc: dict, recent_execs: list) -> str:

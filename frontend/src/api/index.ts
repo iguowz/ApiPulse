@@ -269,6 +269,16 @@ export const promptApi = {
   reset:    (taskType: string): Promise<any>      => http.post(`/prompts/task-type/${taskType}/reset`),
 }
 
+// ── Memory (4-tier 记忆管理) ──────────────────────────────
+export const memoryApi = {
+  listL1:   (params?: Params): Promise<any>  => http.get('/memory/l1', { params }),
+  deleteL1: (key: string): Promise<any>      => http.delete(`/memory/l1/${encodeURIComponent(key)}`),
+  listL2:   (params?: Params): Promise<any>  => http.get('/memory/l2', { params }),
+  deleteL2: (id: ID): Promise<any>           => http.delete(`/memory/l2/${id}`),
+  listL3:   (params?: Params): Promise<any>  => http.get('/memory/l3', { params }),
+  search:   (params?: Params): Promise<any>  => http.post('/memory/search', null, { params }),
+}
+
 // ── Knowledge (ReMe 记忆系统) ──────────────────────────────
 export const knowledgeApi = {
   list:          (params?: Params): Promise<any>    => http.get('/knowledge', { params }),
@@ -279,7 +289,7 @@ export const knowledgeApi = {
   extract:       (apiId: ID): Promise<any>          => http.post(`/knowledge/extract/${apiId}`),
   batchExtract:  (projectId: string): Promise<any>  => http.post('/knowledge/batch-extract', { project_id: projectId }),
   consolidate:   (projectId: string): Promise<any>  => http.post('/knowledge/consolidate', { project_id: projectId }),
-  batchDelete:   (ids: ID[]): Promise<any>          => http.delete('/knowledge/batch-delete', { data: { ids } }),
+  batchDelete:   (ids: ID[], projectId: string): Promise<any> => http.delete('/knowledge/batch-delete', { data: { ids, project_id: projectId } }),
 }
 
 // ── Auth ─────────────────────────────────────────────────────

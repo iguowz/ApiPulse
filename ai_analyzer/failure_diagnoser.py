@@ -17,6 +17,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from openai import AsyncOpenAI, RateLimitError, APIError
 from redis.asyncio import Redis
 
+from ai_analyzer.utils import safe_fire_and_forget
 from config.settings import get_settings
 from services.ai_job_service import AiJobService
 from services.llm_config_service import resolve_llm_config
@@ -107,11 +108,13 @@ _DIAGNOSE_USER = """\
 class FailureDiagnoserService:
     """失败诊断 worker：BLPOP 消费 queue:diagnose_failure → LLM 分析 → 回写 execution"""
 
-    def __init__(self, db: AsyncIOMotorDatabase, redis: Redis, ws_manager=None):
+    def __init__(self, db: AsyncIOMotorDatabase, redis: Redis, ws_manager=None,
+                 memory=None):  # P5: MemoryService | None，4-tier 记忆服务
         s = get_settings()
         self._db = db
         self._redis = redis
         self._ws = ws_manager
+        self._memory = memory  # P5: L2 项目记忆记录，None 时静默跳过
         self._client = AsyncOpenAI(
             api_key=s.openai_api_key,
             base_url=s.openai_base_url,
@@ -354,6 +357,23 @@ class FailureDiagnoserService:
             "Diagnosis done for {}: root_cause={} confidence={:.0%}",
             execution_id, diagnosis.get("root_cause"), diagnosis.get("confidence", 0),
         )
+
+        # P5: 记录 L2 项目记忆（fire-and-forget，诊断结论持久化）
+        memory = getattr(self, "_memory", None)
+        if memory is not None:
+            api_id = exec_doc.get("api_id", "")
+            project_id = exec_doc.get("project_id", "default")
+            safe_fire_and_forget(
+                memory.record_l2(
+                    project_id, "failure_diagnosis",
+                    f"失败诊断: {execution_id[:12]}",
+                    f"根因={diagnosis.get('root_cause', 'unknown')}，置信度={diagnosis.get('confidence', 0):.0%}，"
+                    f"说明={diagnosis.get('explanation', '')[:200]}，建议={diagnosis.get('suggested_fix', '')[:200]}",
+                    tags=["diagnosis", diagnosis.get("root_cause", "unknown"), f"api:{api_id}"],
+                    source="failure_diagnoser",
+                ),
+                name="memory.record_l2:failure_diagnosis",
+            )
 
         # 9. 若根因为 api_change，记录诊断→差异/重分析联动，并自动触发该 API 重新分析。
         # 此前是 TODO，诊断出"接口变更"后无后续动作，用户仍需手动重新分析。

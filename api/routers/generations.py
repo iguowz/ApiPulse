@@ -400,6 +400,8 @@ async def accept_generation(
         resource_name=f"accept generation {generation_id}",
         ip=_get_client_ip(request) if request else "",
     )
+    # 审核反馈写入 L2 记忆：供后续 AI 生成时检索历史采纳偏好
+    await _record_review_to_memory(gv_doc, "accepted", reviewer_id=reviewer_id)
     return {"accepted": True}
 
 
@@ -443,6 +445,12 @@ async def accept_partial_generation(
         resource_id=generation_id,
         resource_name=f"partially accept generation {generation_id} fields={','.join(fields)}",
         ip=_get_client_ip(request) if request else "",
+    )
+    # 审核反馈写入 L2 记忆：记录部分采纳的字段，供后续 AI 了解哪些字段类型更易被接受
+    await _record_review_to_memory(
+        gv_doc, "partially_accepted",
+        reviewer_id=reviewer_id,
+        extra=f"accepted_fields: {', '.join(fields)}",
     )
     return {"accepted": True, "partial": True}
 
@@ -521,6 +529,12 @@ async def reject_generation(
         except Exception as e:
             # 知识写入失败不阻塞拒绝操作
             logger.warning("Failed to write rejection feedback to knowledge: {}", e)
+    # 审核反馈写入 L2 记忆：拒绝原因持久化为项目记忆，供后续 AI 避免重复错误
+    await _record_review_to_memory(
+        gv_doc, "rejected",
+        reviewer_id=reviewer_id,
+        extra=feedback if feedback else None,
+    )
 
     # 审计日志
     await audit_service.log_action(
@@ -596,4 +610,59 @@ async def edit_and_accept_generation(
         resource_name=f"edit and accept generation {generation_id}",
         ip=_get_client_ip(request) if request else "",
     )
+    # 审核反馈写入 L2 记忆：记录用户编辑后再接受的模式，供 AI 了解初始生成与最终接受之间的差异
+    await _record_review_to_memory(
+        gv_doc, "edited_accepted",
+        reviewer_id=reviewer_id,
+    )
     return {"accepted": True, "edited": True}
+
+
+# ── 审核反馈 → L2 记忆桥接 ──────────────────────────────────
+
+async def _record_review_to_memory(
+    gv_doc: dict[str, Any] | None,
+    action: str,
+    *,
+    reviewer_id: str | None = None,
+    extra: str | None = None,
+) -> None:
+    """将审核决策（accepted/rejected/edited_accepted/partially_accepted）写入 L2 项目记忆。
+
+    供后续 AI 生成时通过 MemoryService.search_l2() 检索历史审核偏好，
+    提高生成内容的一次通过率。
+    """
+    if gv_doc is None or _state._memory_service is None:
+        return
+
+    try:
+        project_id = gv_doc.get("project_id", "default")
+        gen_type = gv_doc.get("type", "unknown")
+        api_id = gv_doc.get("api_id", "")
+        summary = gv_doc.get("summary", "")
+        model = gv_doc.get("model", "unknown")
+
+        title = f"[{action}] {gen_type}: {summary[:80] or api_id}"
+        content_parts = [
+            f"审核操作: {action}",
+            f"生成类型: {gen_type}",
+            f"关联 API: {api_id}",
+            f"使用模型: {model}",
+            f"审核人: {reviewer_id or 'unknown'}",
+            f"生成摘要: {summary}",
+        ]
+        if extra:
+            content_parts.append(f"附加信息: {extra}")
+        content = "\n".join(content_parts)
+
+        await _state._memory_service.record_l2(
+            project_id=project_id,
+            entry_type="review_feedback",
+            title=title,
+            content=content,
+            tags=["review", action, gen_type, f"api:{api_id}" if api_id else ""],
+            source="human_review",
+        )
+    except Exception as e:
+        # L2 记忆写入失败不阻塞审核操作
+        logger.warning("Failed to record review feedback to L2 memory: {}", e)

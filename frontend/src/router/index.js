@@ -17,6 +17,8 @@ const routes = [
   { path: '/generations',   name: 'Generations',   component: () => import('@/views/generations/Index.vue') },
   { path: '/coverage',      name: 'Coverage',      component: () => import('@/views/coverage/Index.vue') },
   { path: '/knowledge',     name: 'Knowledge',     component: () => import('@/views/knowledge/Index.vue') },
+  // 记忆页面已迁移至知识库 Tab（/knowledge?tab=memory 或直接切换标签页）
+  { path: '/memory',        redirect: '/knowledge' },
   // 文档说明页：新标签页打开，无侧边栏全屏展示，需登录认证
   { path: '/docs',          name: 'Docs',          component: () => import('@/views/docs/Index.vue'), meta: { plain: true } },
 

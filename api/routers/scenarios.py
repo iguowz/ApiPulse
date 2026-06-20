@@ -321,9 +321,13 @@ async def batch_delete_scenarios(
     service: ScenarioService = Depends(get_scenario_service),
     audit_service: AuditService = Depends(get_audit_service),
 ):
-    """批量删除场景"""
-    project_id = visible_project_id(current_user, None)
-    n = await service.batch_delete_scenarios(ids, project_id)
+    """批量删除场景。按 ID 逐个校验项目访问权限，再统一删除，避免 visible_project_id(None) 回退到 JWT 默认项目导致跨项目删不到。"""
+    # 逐个校验每个场景的项目归属权限（对齐 apis/batch_delete 模式）
+    for sid in ids:
+        doc = await service.get_scenario(sid)
+        if doc:
+            ensure_project_access(current_user, doc.get("project_id"))
+    n = await service.batch_delete_scenarios(ids)
     # 审计日志：记录批量删除场景操作
     await audit_service.log_action(
         user=_get_user_from_request(request), action=AuditAction.BATCH_DELETE,

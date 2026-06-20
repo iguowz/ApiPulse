@@ -29,12 +29,12 @@
 |------|------|
 | **HAR 导入** | ijson 流式解析，静态资源过滤、SHA256 去重、批量写入 MongoDB，自动推送 AI 分析队列 |
 | **AI 分析引擎** | 4 Worker 并行消费队列，生成 API 文档、22 种断言规则、DAG 测试场景。支持 OpenAI / DeepSeek / Ollama |
-| **AI Chat** | 对话式 API 分析，流式 WebSocket 推送，支持多轮交互 |
+| **AI Chat** | 对话式 API 分析，SSE 流式推送，支持多轮交互。对话自动归档 L3，Ctrl/Cmd+K 全局唤起 |
 | **DAG 场景引擎** | Kahn 拓扑排序分波次并发执行，条件分支（10 种操作符）、循环执行、数据工厂注入 |
 | **定时巡检** | APScheduler cron/interval 双模式，DeepDiff 哈希预判 + 全量 diff，告警去重与静默期 |
 | **多渠道路由** | 钉钉 / 企业微信 / Slack / 自定义 Webhook，格式自适应 |
 | **数据工厂** | 80+ Faker 生成器（中英文），支持 null/empty/invalid 异常值注入，递归嵌套生成 |
-| **ReMe 记忆系统** | 多维检索评分，Prompt 预算控制，LLM 提取与去重合并，用户反馈置信度调整 |
+| **四层记忆系统** | L1 长期记忆 (MongoDB) / L2 项目记忆 (MongoDB+文件) / L3 会话记忆 (MongoDB, 30 天 TTL) / L4 对话上下文 (Redis, 24h TTL)。ReMe 语义检索 + LLM 摘要提取，AI 对话自动归档到 L3 |
 | **差异比对** | 导入时自动检测 API 字段变化，AI 评估差异，支持确认/修复/忽略 |
 | **Mock 服务** | 基于 API DSL 自动生成 Mock 端点，支持动态响应模板 |
 | **SQL 数据源** | 支持 PostgreSQL / MySQL 作为数据源，SQL 运行时执行与断言 |
@@ -43,31 +43,46 @@
 
 ---
 
+## 四层记忆系统
+
+系统采用分层记忆架构，从实时对话到长期知识逐层沉淀：
+
+| 层级 | 存储 | 生命周期 | 可见性 | 写入方式 |
+|------|------|----------|--------|----------|
+| **L1 长期记忆** | MongoDB | 永久 | 记忆模块 (L1 Tab) | HAR 导入、断言规则自动提取、用户手动确认 |
+| **L2 项目记忆** | MongoDB + Markdown 文件 | 永久 | 记忆模块 (L2 Tab) | AI 分析结果：文档模板、场景模式、字段 schema |
+| **L3 会话记忆** | MongoDB | 30 天 TTL | 记忆模块 (L3 Tab) | **AI 对话自动归档**（对话结束即写入，同一 session 自动更新不重复）|
+| **L4 对话上下文** | Redis | 24 小时 TTL | 仅 AI 引擎内部 | 每次 AI Chat 交互实时写入，提供多轮对话上下文 |
+
+**L3 自动归档机制**：AI 对话结束后通过 SSE 完成事件触发，优先调用 ReMe LLM 生成结构化摘要，LLM 不可用时自动回退为首条用户消息截断。`clear_chat_history` 清除前会先归档到 L3 避免数据丢失。
+
+---
+
 ## 架构概览
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Frontend (Vue 3)                      │
+│                    Frontend (Vue 3)                     │
 │   Element Plus · ECharts · VueFlow · Pinia · i18n       │
-│                     Nginx :3000                          │
+│                     Nginx :3000                         │
 └──────────────────────┬──────────────────────────────────┘
                        │ /api  →  Backend :8000
                        │ /ws   →  WebSocket
 ┌──────────────────────┴──────────────────────────────────┐
-│                 Backend (FastAPI)                        │
-│                                                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐               │
-│  │ai_analyzer│  │dag_engine│  │ monitor  │               │
-│  │ 4 Workers │  │ 22 断言  │  │ cron/间隔│               │
-│  │ DLQ 死信  │  │ 条件/循环 │  │ DeepDiff │               │
-│  └─────┬─────┘  └────┬─────┘  └────┬─────┘               │
-│        │             │             │                      │
-│  ┌─────┴─────┐  ┌────┴─────┐  ┌────┴─────┐               │
-│  │har_parser │  │  data    │  │knowledge  │              │
-│  │ ijson流式 │  │ factory  │  │  ReMe    │               │
-│  └───────────┘  └──────────┘  └──────────┘               │
-│                                                          │
-│  API Routes (27 modules)                                 │
+│                 Backend (FastAPI)                       │
+│                                                         │
+│  ┌───────────┐  ┌──────────┐  ┌──────────┐              │
+│  │ai_analyzer│  │dag_engine│  │ monitor  │              │
+│  │ 4 Workers │  │ 22 断言   │  │ cron/间隔│              │
+│  │ DLQ 死信   │  │ 条件/循环 │  │ DeepDiff │              │
+│  └─────┬─────┘  └────┬─────┘  └────┬─────┘              │
+│        │             │             │                    │
+│  ┌─────┴─────┐  ┌────┴─────┐  ┌────┴─────┐              │
+│  │har_parser │  │  data    │  │knowledge │              │
+│  │ ijson流式  │  │ factory  │  │  ReMe    │              │
+│  └───────────┘  └──────────┘  └──────────┘              │
+│                                                         │
+│  API Routes (27 modules)                                │
 └──────────────────────┬──────────────────────────────────┘
                        │
 ┌──────────────────────┴──────────────────────────────────┐
@@ -205,7 +220,7 @@ ApiPulse/
 │       ├── data_factory.py        # 数据模板 CRUD + 造数
 │       ├── generations.py         # 生成版本管理
 │       ├── mock_services.py       # Mock 服务管理
-│       ├── knowledge.py           # 知识条目管理
+│       ├── knowledge.py           # 记忆模块 (L1/L2/L3 前端接口)
 │       ├── environments.py        # 执行环境管理
 │       ├── capture.py             # 实时抓包
 │       ├── traffic.py             # 流量数据端点
@@ -238,13 +253,14 @@ ApiPulse/
 ├── data_factory/
 │   └── factory.py                 # 数据工厂（80+ Faker 生成器）
 ├── knowledge/
-│   └── service.py                 # ReMe 记忆系统
+│   └── service.py                 # ReMe 四层记忆系统 (L1/L2/L3/L4)
 ├── mitmproxy_capture/
 │   └── capture_addon.py           # mitmproxy 实时抓包插件
-├── services/                      # 14 个业务服务
+├── services/                      # 15 个业务服务
 │   ├── api_service.py             # API 资产业务逻辑
 │   ├── scenario_service.py        # 场景编排服务
 │   ├── stats_service.py           # 统计聚合服务
+│   ├── memory_service.py          # 四层记忆服务 (L1-L4)
 │   ├── diff_service.py            # 差异比对检测
 │   ├── auth_service.py            # JWT + 用户管理
 │   ├── mock_service.py            # Mock 服务引擎
@@ -259,7 +275,7 @@ ApiPulse/
 ├── models/
 │   ├── dsl.py                     # 核心 DSL 模型
 │   ├── user.py                    # 用户与 RBAC 模型
-│   ├── knowledge.py               # 知识条目模型
+│   ├── knowledge.py               # 记忆条目模型
 │   ├── project.py                 # 项目模型
 │   ├── generation_version.py      # 生成版本模型
 │   ├── mock_service.py            # Mock 服务模型

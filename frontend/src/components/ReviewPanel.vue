@@ -190,7 +190,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { generationApi } from '@/api'
 import { useToastStore } from '@/stores'
@@ -413,14 +413,10 @@ async function handlePartialAccept() {
   }
 }
 
-// generationId 变化时重新加载 diff
-watch(() => props.generationId, () => {
-  if (props.generationId) loadDiff()
-})
-
-onMounted(() => {
-  if (props.generationId) loadDiff()
-})
+// generationId 变化时重新加载 diff（immediate 处理初始加载，避免 watch+onMounted 重复触发）
+watch(() => props.generationId, (id) => {
+  if (id) loadDiff()
+}, { immediate: true })
 </script>
 
 <style scoped>

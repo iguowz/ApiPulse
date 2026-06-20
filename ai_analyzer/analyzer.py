@@ -33,6 +33,7 @@ from models.generation_version import GenerationVersion, GenerationType, Generat
 from services.ai_job_service import AiJobService
 from services.llm_config_service import resolve_llm_config
 from services.structured_output_service import StructuredOutputError, parse_structured_output
+from ai_analyzer.utils import safe_fire_and_forget
 
 AI_DLQ = "queue:ai_analyze:dlq"
 # 场景生成异步队列，路由立即返回 {queued:true}，由 worker 后台处理
@@ -280,12 +281,15 @@ def _build_scenario_type_instruction(scenario_type: str, api_count: int) -> str:
 
 
 class AiAnalyzerService:
-    def __init__(self, db: AsyncIOMotorDatabase, redis: Redis, ws_manager=None, knowledge: KnowledgeService | None = None):
+    def __init__(self, db: AsyncIOMotorDatabase, redis: Redis, ws_manager=None,
+                 knowledge: KnowledgeService | None = None,
+                 memory = None):  # MemoryService | None，4-tier 记忆服务
         s = get_settings()
         self._db = db
         self._redis = redis
         self._ws = ws_manager  # WebSocket 管理器，用于实时推送状态变更
         self._knowledge = knowledge  # ReMe 记忆系统服务，None 时静默跳过记忆检索/提取
+        self._memory = memory  # P4: 4-tier 记忆服务(L2/L3)，None 时静默跳过
         self._client = AsyncOpenAI(
             api_key=s.openai_api_key,
             base_url=s.openai_base_url,
@@ -381,6 +385,33 @@ class AiAnalyzerService:
                 # 记忆检索失败不阻塞分析流程（非关键路径）
                 logger.warning("Memory retrieval failed for {}: {}", api_id, e)
         # else: knowledge 为 None → 静默跳过，不检索记忆
+
+        # P4: L2/L3 记忆检索（4-tier 记忆系统），补充项目级别和会话级别的上下文
+        memory = getattr(self, "_memory", None)
+        if memory is not None:
+            try:
+                project_id = api.project_id or "default"
+                mem_results = await memory.retrieve(project_id, api.request.path, limit=6)
+                l2_entries = mem_results.get("l2", []) if isinstance(mem_results, dict) else []
+                l3_entries = mem_results.get("l3", []) if isinstance(mem_results, dict) else []
+                if l2_entries or l3_entries:
+                    # 将 L2/L3 记忆条目格式化为上下文文本，追加到 memory_ctx
+                    extra_parts: list[str] = []
+                    for e in l2_entries[:3]:
+                        extra_parts.append(
+                            f"[项目记忆] {e.get('title', '')}: {e.get('content', '')[:300]}"
+                        )
+                    for e in l3_entries[:3]:
+                        extra_parts.append(
+                            f"[会话记忆] {e.get('summary', '')[:300]}"
+                        )
+                    if extra_parts:
+                        l23_ctx = "## 项目/会话记忆\n" + "\n".join(extra_parts)
+                        memory_ctx = (memory_ctx + "\n\n" + l23_ctx) if memory_ctx else l23_ctx
+            except Exception as e:
+                # L2/L3 记忆检索失败不阻塞分析流程（非关键路径）
+                logger.warning("L2/L3 memory retrieval failed for {}: {}", api_id, e)
+        # else: memory 为 None → 静默跳过
 
         return api, doc, api_json_str, memory_ctx
 
@@ -945,6 +976,21 @@ class AiAnalyzerService:
             message="文档解析成功（待审核）",
             project_id=doc.get("project_id", "default"),
         )
+        # P4: 记录 L2 项目记忆（fire-and-forget，不阻塞主流程）
+        memory = getattr(self, "_memory", None)
+        if memory is not None:
+            project_id = doc.get("project_id", "default")
+            api_path = api.request.path if api else doc.get("request", {}).get("path", api_id)
+            safe_fire_and_forget(
+                memory.record_l2(
+                    project_id, "doc_analysis",
+                    f"API 文档分析: {api_doc.summary or api_path}",
+                    f"分析了 {api.request.method} {api_path}，生成文档摘要: {api_doc.summary}",
+                    tags=api_doc.tags or [],
+                    source="ai_analyzer",
+                ),
+                name="memory.record_l2:analyze_doc",
+            )
         return True
 
     # ── 仅断言分析 ──────────────────────────────────────
@@ -1036,6 +1082,21 @@ class AiAnalyzerService:
             message=f"断言解析成功（待审核，{len(rules)} 条）",
             project_id=doc.get("project_id", "default"),
         )
+        # P4: 记录 L2 项目记忆（fire-and-forget，不阻塞主流程）
+        memory = getattr(self, "_memory", None)
+        if memory is not None:
+            project_id = doc.get("project_id", "default")
+            api_path = api.request.path if api else doc.get("request", {}).get("path", api_id)
+            safe_fire_and_forget(
+                memory.record_l2(
+                    project_id, "asserts_analysis",
+                    f"API 断言生成: {api.request.method} {api_path}",
+                    f"为 {api.request.method} {api_path} 生成 {len(rules)} 条断言规则",
+                    tags=["asserts", "quality"],
+                    source="ai_analyzer",
+                ),
+                name="memory.record_l2:analyze_asserts",
+            )
         return True
 
     # ── 单接口全量分析（文档 + 断言，兼容旧队列） ─────
@@ -1059,35 +1120,35 @@ class AiAnalyzerService:
         use_stream_doc = doc_runtime.stream
         use_stream_asserts = assert_runtime.stream
         # P1-6: 并行读取 doc/asserts 的 system prompt（DB 激活版本或代码默认值）
-        doc_prompt = await self._get_prompt("doc")
-        assert_prompt = await self._get_prompt("asserts")
+        doc_sys_prompt = await self._get_prompt("doc")
+        assert_sys_prompt = await self._get_prompt("asserts")
         try:
             if use_stream_doc:
                 # 流式：优先使用队列 job_id，前端可精确追踪本次任务；旧任务回退 api_id。
                 doc_raw = await self._call_llm_stream(
                     _DOC_USER.format(api_json=api_json_str),
-                    self._build_system_prompt(doc_prompt, memory_ctx),
+                    self._build_system_prompt(doc_sys_prompt, memory_ctx),
                     max_tokens=s.openai_max_tokens_doc,
                     job_id=job_id or api_id, task_type="doc",
                 )
             else:
                 doc_raw = await self._call_llm(
                     _DOC_USER.format(api_json=api_json_str),
-                    self._build_system_prompt(doc_prompt, memory_ctx),
+                    self._build_system_prompt(doc_sys_prompt, memory_ctx),
                     max_tokens=s.openai_max_tokens_doc,
                     task_type="doc",
                 )
             if use_stream_asserts:
                 assert_raw = await self._call_llm_stream(
                     _ASSERT_USER.format(api_json=api_json_str),
-                    self._build_system_prompt(assert_prompt, memory_ctx),
+                    self._build_system_prompt(assert_sys_prompt, memory_ctx),
                     max_tokens=s.openai_max_tokens_asserts,
                     job_id=job_id or api_id, task_type="asserts",
                 )
             else:
                 assert_raw = await self._call_llm(
                     _ASSERT_USER.format(api_json=api_json_str),
-                    self._build_system_prompt(assert_prompt, memory_ctx),
+                    self._build_system_prompt(assert_sys_prompt, memory_ctx),
                     max_tokens=s.openai_max_tokens_asserts,
                     task_type="asserts",
                 )
@@ -1104,8 +1165,8 @@ class AiAnalyzerService:
 
         # Phase 1: 计算耗时和 token 估算（串行调用总耗时）
         latency_ms = int((time.time() - t0) * 1000)
-        doc_prompt = _DOC_USER.format(api_json=api_json_str)
-        assert_prompt = _ASSERT_USER.format(api_json=api_json_str)
+        user_doc_prompt = _DOC_USER.format(api_json=api_json_str)
+        user_assert_prompt = _ASSERT_USER.format(api_json=api_json_str)
         project_id = doc.get("project_id", "default")
 
         # 解析结果：Phase 1 改为保存 GenerationVersion 而非直接写入 DSL
@@ -1130,7 +1191,7 @@ class AiAnalyzerService:
                 generated_at=datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None),
             )
             doc_input_tokens = self._estimate_tokens(
-                self._build_system_prompt(_DOC_SYSTEM, memory_ctx) + doc_prompt
+                self._build_system_prompt(doc_sys_prompt, memory_ctx) + user_doc_prompt
             )
             doc_output_tokens = self._estimate_tokens(doc_raw)
             doc_summary = f"文档: {api_doc.summary}" if api_doc.summary else "文档生成"
@@ -1143,7 +1204,7 @@ class AiAnalyzerService:
                 latency_ms=latency_ms,
                 input_tokens=doc_input_tokens,
                 output_tokens=doc_output_tokens,
-                prompt=doc_prompt,
+                prompt=user_doc_prompt,
                 project_id=project_id,
                 job_id=job_id,
             )
@@ -1164,7 +1225,7 @@ class AiAnalyzerService:
             # Phase 1: force 或尚无人工配置时才保存断言版本
             if force or not api.asserts:
                 assert_input_tokens = self._estimate_tokens(
-                    self._build_system_prompt(_ASSERT_SYSTEM, memory_ctx) + assert_prompt
+                    self._build_system_prompt(assert_sys_prompt, memory_ctx) + user_assert_prompt
                 )
                 assert_output_tokens = self._estimate_tokens(assert_raw)
                 gv_id = await self._save_generation_version(
@@ -1176,7 +1237,7 @@ class AiAnalyzerService:
                     latency_ms=latency_ms,
                     input_tokens=assert_input_tokens,
                     output_tokens=assert_output_tokens,
-                    prompt=assert_prompt,
+                    prompt=user_assert_prompt,
                     project_id=project_id,
                     job_id=job_id,
                 )
@@ -1257,8 +1318,35 @@ class AiAnalyzerService:
             # ── 后台提取记忆：不阻塞主流程，fire-and-forget ──
             knowledge = getattr(self, "_knowledge", None)
             if knowledge is not None:
-                asyncio.create_task(knowledge.extract_from_api(api_id, self._call_llm))
+                safe_fire_and_forget(knowledge.extract_from_api(api_id, self._call_llm), name="knowledge.extract_from_api")
             # else: knowledge 为 None → 静默跳过
+            # P4: 记录 L2 项目记忆（fire-and-forget，分析结论持久化为项目知识）
+            memory = getattr(self, "_memory", None)
+            if memory is not None:
+                api_path = api.request.path if api else doc.get("request", {}).get("path", api_id)
+                api_tags = (api.doc.tags if api and api.doc else []) or []
+                if doc_parsed_ok:
+                    safe_fire_and_forget(
+                        memory.record_l2(
+                            project_id, "doc_analysis",
+                            f"API 文档分析: {api.request.method} {api_path}",
+                            f"分析了 {api.request.method} {api_path}，生成文档摘要: {api_doc.summary if doc_parsed_ok else 'N/A'}",
+                            tags=api_tags,
+                            source="ai_analyzer",
+                        ),
+                        name="memory.record_l2:analyze_api:doc",
+                    )
+                if assert_parsed_ok:
+                    safe_fire_and_forget(
+                        memory.record_l2(
+                            project_id, "asserts_analysis",
+                            f"API 断言生成: {api.request.method} {api_path}",
+                            f"为 {api.request.method} {api_path} 生成 {len(rules)} 条断言规则",
+                            tags=["asserts", "quality"],
+                            source="ai_analyzer",
+                        ),
+                        name="memory.record_l2:analyze_api:asserts",
+                    )
             # ── 自动触发场景生成：分析成功后入队场景队列 ──
             try:
                 scenario_job_id = f"scenario:{api_id}:{uuid.uuid4().hex[:8]}"
@@ -3194,7 +3282,7 @@ class AiAnalyzerService:
     @staticmethod
     def _safe_parse_json(text: str) -> Any:
         # 委托给共享工具函数，处理 LLM 非标准 JSON（trailing commas、Python literals 等）
-        from ai_analyzer.utils import safe_parse_json
+        from ai_analyzer.utils import safe_fire_and_forget, safe_parse_json
         return safe_parse_json(text)
 
     # 字段名非法字符（仅允许字母、数字、下划线、点号、中划线、$、[]）

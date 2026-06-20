@@ -299,7 +299,7 @@ onMounted(async () => {
 })
 
 // 侧边栏导航定义：按用户工作流排列（总览 → 资产 → 编排/造数/模拟 → 执行/巡检 → 审核/变更/知识 → 配置）
-// 覆盖度已作为 Dashboard 标签页嵌入，不再单独出现在导航中
+// 覆盖度已作为 Dashboard 标签页嵌入，记忆已迁移至知识库 Tab，不再单独出现在导航中
 const nav = [
   { to: '/dashboard',   labelKey: 'nav.dashboard',   descKey: 'navDesc.dashboard',   icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>' },
   { to: '/apis',        labelKey: 'nav.apis',        descKey: 'navDesc.apis',        icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h8M2 12h5"/></svg>' },

@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import random
 import uuid
@@ -368,7 +369,8 @@ class DataFactory:
         context: dict[str, Any] | None = None,
         count: int = 1,
     ) -> tuple[str, list[dict[str, Any]]]:
-        data = self.generate(template, context, count)
+        # 在线程池中运行同步 faker 生成，避免阻塞事件循环（大量字段/记录时 faker 调用密集）
+        data = await asyncio.to_thread(self.generate, template, context, count)
         cache_key = f"datafactory:{template.api_id}:{uuid.uuid4().hex[:8]}"
         await self._redis.setex(cache_key, DATA_TTL, json.dumps(data, ensure_ascii=False, default=str))
         logger.debug("DataFactory cached {} records → {}", len(data), cache_key)

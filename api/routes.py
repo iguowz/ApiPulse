@@ -32,6 +32,7 @@ from api.deps import (
 )
 from knowledge.service import KnowledgeService
 from monitor.monitor import MonitorService
+from services.memory_service import MemoryService  # ReMe 4-tier 记忆系统
 
 _settings = get_settings()
 
@@ -341,6 +342,7 @@ from api.routers.diff_alerts import router as diff_alerts_router
 from api.routers.generations import router as generations_router
 from api.routers.prompts import router as prompts_router  # P1-6: Prompt 版本化管理
 from api.routers.ai_chat import router as ai_chat_router  # P1-3: AI 对话面板
+from api.routers.memory import router as memory_router  # P3: 4-tier 记忆管理
 from api.routers.mock_services import router as mock_services_router
 from api.routers.traffic import router as traffic_router
 from api.routers.database_services import router as database_services_router
@@ -354,6 +356,7 @@ app.include_router(ai_chat_router)  # P1-3: AI 对话面板
 app.include_router(mock_services_router)
 app.include_router(traffic_router)
 app.include_router(database_services_router)
+app.include_router(memory_router)  # P3: 4-tier 记忆管理
 app.include_router(projects_router)
 app.include_router(har_router)
 app.include_router(apis_router)
@@ -400,7 +403,10 @@ async def startup():
     await _state._monitor_service.start()
 
     _state._knowledge_service = KnowledgeService(db, ws_manager=_ws)
-    _state._ai_analyzer = AiAnalyzerService(db, redis, ws_manager=_ws, knowledge=_state._knowledge_service)
+    # ReMe 4-tier 记忆服务：L1 长期 / L2 项目 / L3 会话 / L4 对话
+    _state._memory_service = MemoryService(db, redis, _settings)
+    await _state._memory_service.start()
+    _state._ai_analyzer = AiAnalyzerService(db, redis, ws_manager=_ws, knowledge=_state._knowledge_service, memory=_state._memory_service)
     # run_all_workers 同时启动 analyze + scenario 两个队列消费者
     _state._ai_worker_task = asyncio.create_task(_state._ai_analyzer.run_all_workers())
 
@@ -409,12 +415,12 @@ async def startup():
     _state._diff_eval_task = asyncio.create_task(_state._diff_evaluator.run_worker())
 
     # Phase 4: 启动失败诊断 worker（消费 queue:diagnose_failure）
-    _state._failure_diagnoser = FailureDiagnoserService(db, redis, ws_manager=_ws)
+    _state._failure_diagnoser = FailureDiagnoserService(db, redis, ws_manager=_ws, memory=_state._memory_service)
     _state._diagnose_task = asyncio.create_task(_state._failure_diagnoser.run_worker())
 
     # P1-2: 启动告警 AI 分析 worker（消费 queue:alert_analyze）
     from ai_analyzer.alert_analyzer import AlertAnalyzerService
-    _state._alert_analyzer = AlertAnalyzerService(db, redis, ws_manager=_ws)
+    _state._alert_analyzer = AlertAnalyzerService(db, redis, ws_manager=_ws, memory=_state._memory_service)
     _state._alert_analyze_task = asyncio.create_task(_state._alert_analyzer.run_worker())
 
     logger.info("Platform v5 started")
@@ -483,6 +489,8 @@ async def shutdown():
             pass
     if _state._monitor_service:
         _state._monitor_service.stop()
+    if _state._memory_service:
+        await _state._memory_service.close()
     await close_connections()
 
 

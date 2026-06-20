@@ -26,6 +26,8 @@ _diagnose_task: asyncio.Task | None = None
 # P1-2: AI 告警分析服务
 _alert_analyzer: Any = None       # AlertAnalyzerService | None
 _alert_analyze_task: asyncio.Task | None = None
+# ReMe 4-tier 记忆服务
+_memory_service: Any = None       # MemoryService | None
 
 # ── 抓包状态（内存，单进程） ─────────────────────────────────
 _capture_state: dict[str, Any] = {

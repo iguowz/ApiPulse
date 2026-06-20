@@ -309,13 +309,13 @@
           </el-table>
         </el-card>
 
-        <!-- 关联记忆（知识库） -->
-        <el-card v-if="relatedMemories.length" style="margin-top:12px">
+        <!-- 关联知识库 & 记忆：始终显示，无数据时提供提取入口 -->
+        <el-card style="margin-top:12px">
           <template #header>
             <div class="flex items-center justify-between">
-              <span class="card-title">{{ $t('api_detail.related_memories', { n: relatedMemories.length }) }}</span>
+              <span class="card-title">{{ $t('api_detail.related_memories', { n: relatedKnowledge.length }) }}</span>
               <div class="flex items-center gap-8">
-                <el-button size="small" @click="activeTab = 'knowledge'">{{ $t('api_detail.view_all') }}</el-button>
+                <el-button v-if="relatedKnowledge.length" size="small" @click="activeTab = 'knowledge'">{{ $t('api_detail.view_all') }}</el-button>
                 <el-button v-if="analysisApplied" size="small"
                   @click="extractMemories" :disabled="extractingMem" :loading="extractingMem">
                   {{ extractingMem ? '…' : $t('api_detail.extract_memories') }}
@@ -323,14 +323,20 @@
               </div>
             </div>
           </template>
-          <div class="memory-cards">
-            <div v-for="m in relatedMemories" :key="m.id" class="memory-card-item">
+          <!-- 无关联知识库条目时显示空状态 + 提取入口 -->
+          <el-empty v-if="!relatedKnowledge.length" :description="$t('api_detail.no_related_memories')" :image-size="36" />
+          <div v-else class="memory-cards">
+            <div v-for="m in relatedKnowledge" :key="m.id" class="memory-card-item">
               <div class="flex items-center gap-8">
                 <el-tag :color="typeColor(m.type)" size="small" style="color:#fff;border:none">{{ $t('knowledge_type_' + m.type) }}</el-tag>
                 <span class="memory-card-title">{{ m.title }}</span>
                 <span class="memory-confidence text-3" style="font-size:10px">{{ (m.confidence*100).toFixed(0) }}%</span>
               </div>
               <div class="text-2" style="font-size:12px;margin-top:4px">{{ truncate(m.content, 120) }}</div>
+              <!-- 标签：与知识库 Tab 保持一致 -->
+              <div v-if="m.tags?.length" class="flex items-center gap-4" style="margin-top:6px">
+                <el-tag v-for="t in m.tags" :key="t" size="small" type="info" style="font-size:10px">{{ tagLabel(t) }}</el-tag>
+              </div>
             </div>
           </div>
         </el-card>
@@ -549,45 +555,148 @@
         </el-card>
       </div>
 
-      <!-- Knowledge tab -->
+      <!-- 知识库 & 记忆 Tab：子Tab整合 Knowledge + Memory(L1/L2/L3) -->
       <div v-if="activeTab === 'knowledge'">
-        <div class="flex items-center justify-between" style="margin-bottom:12px">
-          <span class="text-2">{{ $t('api_detail.related_memories', { n: knowledgeEntries.length }) }}</span>
+        <div class="flex items-center justify-between" style="margin-bottom:8px">
+          <span class="text-2">{{ $t('api_detail.related_memories', { n: knowledgeEntries.length + l1MemTotal + l2MemItems.length + l3MemItems.length }) }}</span>
           <div class="flex items-center gap-8">
             <el-button v-if="analysisApplied" size="small"
               @click="extractMemories" :disabled="extractingMem" :loading="extractingMem">
               {{ extractingMem ? '…' : $t('api_detail.extract_memories') }}
             </el-button>
-            <el-button size="small" @click="loadKnowledgeEntries">{{ $t('common.refresh') }}</el-button>
+            <el-button size="small" @click="reloadActiveSubTab">{{ $t('common.refresh') }}</el-button>
           </div>
         </div>
-        <el-empty v-if="!knowledgeEntries.length" :description="$t('api_detail.no_related_memories')" :image-size="36" style="padding:40px" />
-        <div v-else class="knowledge-list">
-          <el-card v-for="m in knowledgeEntries" :key="m.id" style="margin-bottom:10px">
-            <div class="knowledge-item-header">
-              <div class="flex items-center gap-8">
-                <el-tag :color="typeColor(m.type)" size="small" style="color:#fff;border:none">{{ $t('knowledge_type_' + m.type) }}</el-tag>
-                <span class="knowledge-item-title">{{ m.title }}</span>
-                <span class="text-3" style="font-size:10px">{{ (m.confidence*100).toFixed(0) }}%</span>
+
+        <!-- 子 Tab：知识库 / L1长期记忆 / L2项目记忆 / L3会话记忆 -->
+        <el-tabs v-model="knowledgeSubTab" @tab-change="onKnowledgeSubTabChange">
+          <!-- 知识库子 Tab -->
+          <el-tab-pane label="知识库" name="knowledge">
+            <!-- 知识库筛选栏 -->
+            <div class="filter-bar" style="padding:8px 0">
+              <el-input v-model="knowledgeSearch" :placeholder="$t('knowledge_search_placeholder')" size="small" style="width:200px" clearable @change="loadKnowledgeEntries" @clear="loadKnowledgeEntries" />
+              <el-select v-model="knowledgeFilterType" :placeholder="$t('knowledge_col_type')" size="small" style="width:140px" @change="loadKnowledgeEntries">
+                <el-option :label="$t('common.all')" value="" />
+                <el-option :label="$t('knowledge_type_field_pattern')" value="field_pattern" />
+                <el-option :label="$t('knowledge_type_assertion_pattern')" value="assertion_pattern" />
+                <el-option :label="$t('knowledge_type_doc_pattern')" value="doc_pattern" />
+                <el-option :label="$t('knowledge_type_scenario_pattern')" value="scenario_pattern" />
+              </el-select>
+            </div>
+            <el-empty v-if="!knowledgeEntries.length" :description="$t('api_detail.no_related_memories')" :image-size="36" style="padding:40px" />
+            <div v-else class="knowledge-list">
+              <el-card v-for="m in knowledgeEntries" :key="m.id" style="margin-bottom:10px">
+                <div class="knowledge-item-header">
+                  <div class="flex items-center gap-8">
+                    <el-tag :color="typeColor(m.type)" size="small" style="color:#fff;border:none">{{ $t('knowledge_type_' + m.type) }}</el-tag>
+                    <span class="knowledge-item-title">{{ m.title }}</span>
+                    <span class="text-3" style="font-size:10px">{{ (m.confidence*100).toFixed(0) }}%</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="text-3" style="font-size:10px">{{ $t('knowledge_col_usage') }}: {{ m.usage_count || 0 }}</span>
+                    <el-button size="small" @click="editKnowledgeEntry(m)">{{ $t('common.edit') }}</el-button>
+                  </div>
+                </div>
+                <div class="text-2" style="font-size:13px;line-height:1.7;white-space:pre-wrap;margin-top:8px">{{ m.content }}</div>
+                <div v-if="m.tags?.length" class="flex items-center gap-4" style="margin-top:8px">
+                  <el-tag v-for="t in m.tags" :key="t" size="small" type="info" style="font-size:10px">{{ tagLabel(t) }}</el-tag>
+                </div>
+                <div v-if="m.sources?.length" class="text-3" style="font-size:10px;margin-top:6px">
+                  {{ $t('knowledge_col_sources') }}: {{ m.sources.join(', ') }}
+                </div>
+              </el-card>
+              <!-- 知识库分页 -->
+              <div class="pagination-wrapper" v-if="knowledgeTotal > knowledgePageSize">
+                <el-pagination
+                  v-model:current-page="knowledgePage"
+                  :page-size="knowledgePageSize"
+                  :total="knowledgeTotal"
+                  layout="prev, pager, next"
+                  small
+                  @current-change="loadKnowledgeEntries"
+                />
               </div>
-              <div class="flex items-center gap-8">
-                <!-- 引用计数 -->
-                <span class="text-3" style="font-size:10px">{{ $t('knowledge_col_usage') }}: {{ m.usage_count || 0 }}</span>
-                <!-- 编辑按钮 -->
-                <el-button size="small" @click="editKnowledgeEntry(m)">{{ $t('common.edit') }}</el-button>
-              </div>
             </div>
-            <div class="text-2" style="font-size:13px;line-height:1.7;white-space:pre-wrap;margin-top:8px">{{ m.content }}</div>
-            <!-- 标签 -->
-            <div v-if="m.tags?.length" class="flex items-center gap-4" style="margin-top:8px">
-              <el-tag v-for="t in m.tags" :key="t" size="small" type="info" style="font-size:10px">{{ t }}</el-tag>
+          </el-tab-pane>
+
+          <!-- L1 长期记忆子 Tab -->
+          <el-tab-pane :label="$t('memory.tabL1')" name="l1">
+            <el-empty v-if="!l1MemItems.length && !memLoading.l1" :description="$t('memory.emptyL1')" :image-size="36" style="padding:40px" />
+            <el-table v-else :data="l1MemItems" row-key="key" max-height="calc(100vh - 420px)" :empty-text="$t('memory.emptyL1')" v-loading="memLoading.l1">
+              <el-table-column :label="$t('memory.colKey')" width="200">
+                <template #default="{ row }">
+                  <span class="mono" style="font-size:12px;font-weight:600">{{ row.key }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colContent')" min-width="280">
+                <template #default="{ row }">
+                  <span class="text-2" style="font-size:12px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">{{ (row.content || '').slice(0, 300) }}{{ (row.content || '').length > 300 ? '…' : '' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colSource')" width="100">
+                <template #default="{ row }">{{ $t('memory.source_' + row.source) || row.source || '—' }}</template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colUpdatedAt')" width="160">
+                <template #default="{ row }">{{ formatTime(row.updated_at || row.created_at) }}</template>
+              </el-table-column>
+            </el-table>
+            <div class="flex-between" style="padding:8px 0" v-if="l1MemTotal > 20">
+              <span class="text-3">{{ $t('memory.totalItems', { n: l1MemTotal }) }}</span>
+              <el-pagination v-model:current-page="l1MemPage" :page-size="20" :total="l1MemTotal" layout="prev,next" small @current-change="loadL1Memories" />
             </div>
-            <!-- 来源 -->
-            <div v-if="m.sources?.length" class="text-3" style="font-size:10px;margin-top:6px">
-              {{ $t('knowledge_col_sources') }}: {{ m.sources.join(', ') }}
-            </div>
-          </el-card>
-        </div>
+          </el-tab-pane>
+
+          <!-- L2 项目记忆子 Tab -->
+          <el-tab-pane :label="$t('memory.tabL2')" name="l2">
+            <el-empty v-if="!l2MemItems.length && !memLoading.l2" :description="$t('memory.emptyL2')" :image-size="36" style="padding:40px" />
+            <el-table v-else :data="l2MemItems" row-key="id" max-height="calc(100vh - 420px)" :empty-text="$t('memory.emptyL2')" v-loading="memLoading.l2">
+              <el-table-column :label="$t('memory.colTitle')" min-width="180">
+                <template #default="{ row }">
+                  <span class="mono" style="font-size:13px;font-weight:600">{{ row.title }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colType')" width="110">
+                <template #default="{ row }">
+                  <el-tag size="small" type="info">{{ typeLabel(row.type) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colContent')" min-width="260">
+                <template #default="{ row }">
+                  <span class="text-2" style="font-size:12px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">{{ (row.content || '').slice(0, 300) }}{{ (row.content || '').length > 300 ? '…' : '' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colCreatedAt')" width="160">
+                <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
+          <!-- L3 会话记忆子 Tab -->
+          <el-tab-pane :label="$t('memory.tabL3')" name="l3">
+            <el-empty v-if="!l3MemItems.length && !memLoading.l3" :description="$t('memory.emptyL3')" :image-size="36" style="padding:40px" />
+            <el-table v-else :data="l3MemItems" row-key="id" max-height="calc(100vh - 420px)" :empty-text="$t('memory.emptyL3')" v-loading="memLoading.l3">
+              <el-table-column :label="$t('memory.colSessionId')" width="180">
+                <template #default="{ row }">
+                  <span class="mono" style="font-size:11px">{{ row.session_id?.slice(0, 12) }}…</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colSummary')" min-width="280">
+                <template #default="{ row }">
+                  <span class="text-2" style="font-size:12px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">{{ (row.summary || '').slice(0, 300) }}{{ (row.summary || '').length > 300 ? '…' : '' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colUser')" width="80">
+                <template #default="{ row }">{{ row.user_id || '—' }}</template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colCreatedAt')" width="160">
+                <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colExpiresAt')" width="160">
+                <template #default="{ row }">{{ formatTime(row.expires_at) }}</template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
 
         <!-- 编辑知识库条目弹窗 -->
         <el-dialog v-model="showKnowledgeEdit" :title="$t('knowledge_edit_title')" width="520px" :close-on-click-modal="false">
@@ -829,7 +938,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { use } from 'echarts/core'
@@ -838,7 +947,7 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 import { Close } from '@element-plus/icons-vue'
-import { apiApi, scenarioApi, environmentApi, knowledgeApi, aiOpLogApi, generationApi, openWs } from '@/api'
+import { apiApi, scenarioApi, environmentApi, knowledgeApi, memoryApi, aiOpLogApi, generationApi, openWs } from '@/api'
 import { useProjectStore, useToastStore } from '@/stores'
 import { fmt, methodClass, jsonPretty } from '@/utils'
 import ResultTag from '@/components/ResultTag.vue'
@@ -913,9 +1022,27 @@ const typeColorMap = {
   assertion_pattern: '#F7A84F',
   doc_pattern: '#4FF7A8',
   scenario_pattern: '#A84FF7',
+  // 补充 knowledge_type_* 中缺失的 4 种类型颜色映射
+  api: '#6C5CE7',
+  scenario: '#00B894',
+  monitor: '#FDCB6E',
+  general: '#636E72',
 }
 function typeColor(type) { return typeColorMap[type] || '#999' }
 function truncate(s, n) { return s && s.length > n ? s.slice(0, n) + '…' : s || '' }
+
+// 标签翻译辅助：知识库/记忆标签可能为英文 key 或中文文本，尝试 i18n 后回退到原始值
+// 同时处理 "memory.tag_api:UUID" 后缀，去掉 UUID 部分后查翻译
+function tagLabel(tag) {
+  // 处理 "memory.tag_xxx" 格式的后端前缀
+  let clean = tag.startsWith('memory.tag_') ? tag.slice(11) : tag.startsWith('memory.') ? tag.slice(7) : tag
+  // 去掉 ":UUID" 后缀（如 "tag_api:384fd1b8-..." → "tag_api"）
+  const colonIdx = clean.indexOf(':')
+  if (colonIdx !== -1) clean = clean.slice(0, colonIdx)
+  const key = 'memory.tag_' + clean
+  const translated = t(key)
+  return translated !== key ? translated : tag
+}
 
 const showRunModal     = ref(false)
 const runEnvironmentId = ref('')  // 当前选中的执行环境 ID
@@ -958,12 +1085,28 @@ const savingAsserts = ref(false)
 const savingDoc = ref(false)
 const docForm = ref({ summary: '', description: '', tags: [], params: [], response_fields: [] })
 const relatedScenarios = ref([])  // 包含当前 API 的关联场景
-const relatedMemories = ref([])   // 关联知识库记忆（overview 卡片展示，最多5条）
-const knowledgeEntries = ref([])  // 知识库tab 全部条目（最多50条）
+const relatedKnowledge = ref([])   // 关联知识库条目（overview 卡片展示，最多5条）
+const knowledgeEntries = ref([])  // 知识库子Tab 全部条目
+const knowledgeSearch = ref('')       // 知识库子Tab搜索关键词
+const knowledgeFilterType = ref('')   // 知识库子Tab类型筛选
+const knowledgePage = ref(1)          // 知识库子Tab当前页码
+const knowledgePageSize = ref(20)     // 知识库子Tab每页条数
+const knowledgeTotal = ref(0)         // 知识库子Tab总数
 const showKnowledgeEdit = ref(false)  // 编辑知识库条目弹窗可见性
 const editingEntry = ref({})          // 当前编辑的知识库条目
 const savingKnowledge = ref(false)    // 保存知识库条目中
 const extractingMem = ref(false)  // 记忆提取中
+
+// 知识库&记忆 Tab 子Tab状态
+const knowledgeSubTab = ref('knowledge')  // 当前子Tab：knowledge | l1 | l2 | l3
+
+// Memory(L1/L2/L3) 状态
+const l1MemItems = ref([])    // L1长期记忆列表
+const l1MemTotal = ref(0)     // L1总数
+const l1MemPage = ref(1)      // L1当前页码
+const l2MemItems = ref([])    // L2项目记忆列表
+const l3MemItems = ref([])    // L3会话记忆列表
+const memLoading = reactive({ l1: false, l2: false, l3: false })  // Memory加载状态
 const aiOpsLogs    = ref([])     // AI 操作日志列表
 const aiOpsLoading = ref(false)  // AI 操作日志加载中
 const aiOpsLoaded  = ref(false)  // 是否已加载过 AI 操作日志（懒加载标记）
@@ -1087,7 +1230,7 @@ async function load() {
     initDocForm()  // 初始化 AI 文档编辑表单
     await loadAsserts()
     loadRelatedScenarios()  // 异步加载关联场景，不阻塞页面
-    loadRelatedMemories()   // 异步加载关联记忆，不阻塞页面
+    loadKnowledgeOverview() // 异步加载关联知识库&记忆概述，不阻塞页面
     loadKnowledgeEntries()  // 异步加载知识库tab数据，不阻塞页面
     loadMockCases()         // 异步加载 API Mock Case，供资产页直接管理
   } catch (e) {
@@ -1106,56 +1249,153 @@ async function loadRelatedScenarios() {
   } catch { /* 静默失败，关联场景为辅助功能 */ }
 }
 
-// 搜索知识库：从精确到宽泛逐层回退，确保总能找到关联记忆
-// 搜索层级：路径分词+tags → 仅tags → 首个路径段 → 空（全量）
-async function searchKnowledge(limit) {
+// 时间格式化：将 ISO/datetime 字符串转为可读格式
+function formatTime(raw) {
+  if (!raw) return '—'
+  try {
+    const d = new Date(raw)
+    if (isNaN(d.getTime())) return raw // 非标准格式直接返回原值
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  } catch { return raw }
+}
+
+// 记忆类型翻译：去掉 "memory.type_" 前缀后尝试 i18n 翻译
+function typeLabel(type) {
+  if (!type) return '—'
+  const clean = type.startsWith('memory.type_') ? type.slice(12) : type
+  const memoryKey = 'memory.type_' + clean
+  const translated = t(memoryKey)
+  if (translated !== memoryKey) return translated
+  const knowledgeKey = 'knowledge_type_' + clean
+  const kTranslated = t(knowledgeKey)
+  return kTranslated !== knowledgeKey ? kTranslated : clean
+}
+
+// 从 API 路径和标签构建搜索关键词，用于知识库和记忆关联检索
+function buildSearchKeywords() {
   const apiData = api.value
   const pathSegments = (apiData.request?.path || '')
     .replace(/\/\{[^}]+\}/g, '')
     .split('/').filter(Boolean)
   const tags = (apiData.tags || []).filter(Boolean)
-
-  // 构建多层搜索关键词：精确 → 宽泛
-  const searches = []
   const pathStr = pathSegments.join(' ')
-  const exact = [pathStr, ...tags].filter(Boolean).join(' ')
-  if (exact) searches.push(exact)
-  // 只用 tags 搜索（避免 path 分词过于具体导致零结果）
-  const tagsOnly = tags.join(' ')
-  if (tagsOnly && !searches.includes(tagsOnly)) searches.push(tagsOnly)
-  // 首个路径段（通常是资源名，如 /users/{id} → users）
-  if (pathSegments.length > 0) {
-    const broad = pathSegments[0]
-    if (broad && !searches.includes(broad)) searches.push(broad)
-  }
-  // 最后一层回退：无关键词，获取所有知识库条目
-  if (!searches.includes('')) searches.push('')
-
-  // 逐层尝试，命中即返回：精确匹配 → tags 匹配 → 资源名 → 全量（确保总能返回结果）
-  for (const search of searches) {
-    const res = await knowledgeApi.list({ project_id: projectStore.current, search, limit })
-    if (res.items?.length) return res.items
-  }
-  return []
+  return [pathStr, ...tags].filter(Boolean).join(' ')
 }
 
-async function loadRelatedMemories() {
+// 加载概览卡片关联知识库（最多5条，使用多层回退确保有结果）
+async function loadKnowledgeOverview() {
   try {
-    relatedMemories.value = await searchKnowledge(5)
+    // 使用逐层回退搜索：路径+tags → 仅tags → 首个路径段 → 空
+    const apiData = api.value
+    const pathSegments = (apiData.request?.path || '')
+      .replace(/\/\{[^}]+\}/g, '')
+      .split('/').filter(Boolean)
+    const tags = (apiData.tags || []).filter(Boolean)
+
+    const searches = []
+    const pathStr = pathSegments.join(' ')
+    const exact = [pathStr, ...tags].filter(Boolean).join(' ')
+    if (exact) searches.push(exact)
+    const tagsOnly = tags.join(' ')
+    if (tagsOnly && !searches.includes(tagsOnly)) searches.push(tagsOnly)
+    if (pathSegments.length > 0) {
+      const broad = pathSegments[0]
+      if (broad && !searches.includes(broad)) searches.push(broad)
+    }
+    if (!searches.includes('')) searches.push('')
+
+    for (const search of searches) {
+      const res = await knowledgeApi.list({ project_id: projectStore.current, search, limit: 5 })
+      if (res.items?.length) {
+        relatedKnowledge.value = res.items
+        return
+      }
+    }
+    relatedKnowledge.value = []
   } catch (e) {
     toast.error(e.message || t('api_detail.knowledge_load_failed'))
   }
 }
 
-// 加载知识库tab全部条目，同时同步 overview 卡片数据
+// 加载知识库条目（带搜索、类型筛选和分页）
 async function loadKnowledgeEntries() {
   try {
-    const items = await searchKnowledge(50)
-    knowledgeEntries.value = items
-    relatedMemories.value = items.slice(0, 5)  // 同步 overview 卡片，避免两套数据不一致
+    const params = {
+      project_id: projectStore.current,
+      skip: (knowledgePage.value - 1) * knowledgePageSize.value,
+      limit: knowledgePageSize.value,
+    }
+    // 知识库子Tab有手动输入搜索词则用搜索词，否则用 API 关键词
+    const search = knowledgeSearch.value || buildSearchKeywords()
+    if (search) params.search = search
+    if (knowledgeFilterType.value) params.type = knowledgeFilterType.value
+    const res = await knowledgeApi.list(params)
+    knowledgeEntries.value = res.items || []
+    knowledgeTotal.value = res.total || 0
   } catch (e) {
     toast.error(e.message || t('api_detail.knowledge_load_failed'))
   }
+}
+
+// 加载 L1 长期记忆（跨项目，按当前 API 关联过滤）
+async function loadL1Memories() {
+  memLoading.l1 = true
+  try {
+    const params = { skip: (l1MemPage.value - 1) * 20, limit: 20 }
+    if (route.params.id) params.api_id = route.params.id
+    const res = await memoryApi.listL1(params)
+    l1MemItems.value = res.items || []
+    l1MemTotal.value = res.total || 0
+  } catch (e) {
+    console.error('load L1 memories failed:', e)
+  } finally {
+    memLoading.l1 = false
+  }
+}
+
+// 加载 L2 项目记忆（按当前 API 关联过滤，通过 tags 中的 api:UUID 匹配）
+async function loadL2Memories() {
+  memLoading.l2 = true
+  try {
+    const params = { project_id: projectStore.current, limit: 200 }
+    if (route.params.id) params.api_id = route.params.id
+    const res = await memoryApi.listL2(params)
+    l2MemItems.value = res.items || []
+  } catch (e) {
+    console.error('load L2 memories failed:', e)
+  } finally {
+    memLoading.l2 = false
+  }
+}
+
+// 加载 L3 会话记忆（按当前 API 关联过滤，通过 tags 中的 api:UUID 匹配）
+async function loadL3Memories() {
+  memLoading.l3 = true
+  try {
+    const params = { project_id: projectStore.current, limit: 200 }
+    if (route.params.id) params.api_id = route.params.id
+    const res = await memoryApi.listL3(params)
+    l3MemItems.value = res.items || []
+  } catch (e) {
+    console.error('load L3 memories failed:', e)
+  } finally {
+    memLoading.l3 = false
+  }
+}
+
+// 知识库&记忆子Tab切换时按需加载（@tab-change 事件 + watch 双重保障）
+function onKnowledgeSubTabChange(name) {
+  if (name === 'knowledge') loadKnowledgeEntries()
+  else if (name === 'l1') loadL1Memories()
+  else if (name === 'l2') loadL2Memories()
+  else if (name === 'l3') loadL3Memories()
+}
+watch(knowledgeSubTab, (newTab) => { onKnowledgeSubTabChange(newTab) })
+
+// 子Tab刷新按钮
+function reloadActiveSubTab() {
+  onKnowledgeSubTabChange(knowledgeSubTab.value)
 }
 
 function editKnowledgeEntry(m) {
@@ -1192,7 +1432,7 @@ async function extractMemories() {
   try {
     await knowledgeApi.extract(route.params.id)
     toast.success(t('api_detail.mem_extracted', { n: 1 }))
-    await loadRelatedMemories()
+    await loadKnowledgeOverview()
     await loadKnowledgeEntries()
   } catch (e) {
     toast.error(e.message)
