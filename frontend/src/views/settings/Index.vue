@@ -21,7 +21,7 @@
                 </div>
               </template>
 
-              <el-form label-position="top">
+              <el-form ref="llmFormRef" :model="form" :rules="llmFormRules" label-position="top">
                 <el-form-item :label="$t('settings.llm_provider')">
                   <el-select v-model="form.provider" @change="onProviderChange" style="width:100%">
                     <el-option v-for="p in presets" :key="p.id" :value="p.id" :label="p.name" />
@@ -30,10 +30,10 @@
                 </el-form-item>
 
                 <div v-if="form.provider === 'custom'" style="display:flex;gap:12px">
-                  <el-form-item :label="$t('settings.llm_base_url')" style="flex:1">
+                  <el-form-item prop="base_url" :label="$t('settings.llm_base_url')" style="flex:1">
                     <el-input v-model="form.base_url" placeholder="https://api.openai.com/v1" class="mono" />
                   </el-form-item>
-                  <el-form-item :label="$t('settings.llm_model_name')" style="flex:1">
+                  <el-form-item prop="model" :label="$t('settings.llm_model_name')" style="flex:1">
                     <el-input v-model="form.model" placeholder="gpt-4o-mini" class="mono" />
                   </el-form-item>
                 </div>
@@ -632,6 +632,57 @@
             </el-table>
           </el-card>
         </el-tab-pane>
+
+        <!-- Tab: 机器人接入 (Bot 集成：企业微信/飞书/QQ) -->
+        <el-tab-pane :label="$t('bot_config.title')" name="bots">
+          <el-card v-loading="botsLoading">
+            <template #header>
+              <div class="flex items-center justify-between">
+                <span>{{ $t('bot_config.title') }}</span>
+                <el-button type="primary" size="small" @click="openBotCreate">{{ $t('bot_config.new_btn') }}</el-button>
+              </div>
+            </template>
+
+            <el-empty v-if="!botsLoading && !bots.length" :description="$t('settings.dlq_empty')" :image-size="48" />
+
+            <el-table v-else :data="bots" style="width:100%">
+              <el-table-column :label="$t('bot_config.col_name')" min-width="140">
+                <template #default="{ row }">
+                  <span>{{ row.name }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('bot_config.col_platform')" width="110">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="botPlatformTagType(row.platform)">{{ botPlatformLabel(row.platform) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('bot_config.col_enabled')" width="80">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.enabled ? 'success' : 'info'">
+                    {{ row.enabled ? $t('common.enabled') : $t('common.disabled') }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('bot_config.col_webhook')" min-width="260">
+                <template #default="{ row }">
+                  <div class="flex items-center" style="gap:6px">
+                    <span class="mono text-2" style="font-size:11px;word-break:break-all">{{ botWebhookUrl(row.id) }}</span>
+                    <el-button size="small" link @click="copyBotWebhook(row.id)">{{ $t('bot_config.copy_webhook') }}</el-button>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('common.actions')" width="180">
+                <template #default="{ row }">
+                  <div class="flex items-center" style="gap:6px;flex-wrap:nowrap;white-space:nowrap">
+                    <el-button size="small" link @click="toggleBotEnabled(row)">{{ row.enabled ? $t('common.disable') : $t('common.enable') }}</el-button>
+                    <el-button size="small" link @click="editBot(row)">{{ $t('common.edit') }}</el-button>
+                    <el-button type="danger" size="small" link @click="deleteBot(row)">✕</el-button>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+        </el-tab-pane>
       </el-tabs>
     </div>
 
@@ -917,6 +968,48 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 机器人接入：创建/编辑弹窗 -->
+    <el-dialog
+      v-model="botModal"
+      :title="editingBotId ? $t('common.edit') : $t('bot_config.new_btn')"
+      width="520px"
+      @close="resetBotForm"
+    >
+      <el-form label-position="top">
+        <el-form-item :label="$t('bot_config.form_name')" required>
+          <el-input v-model="botForm.name" :placeholder="$t('bot_config.form_name')" />
+        </el-form-item>
+        <el-form-item :label="$t('bot_config.form_platform')" required>
+          <el-select v-model="botForm.platform" style="width:100%">
+            <el-option :label="$t('bot_config.platform_wecom')" value="wecom" />
+            <el-option :label="$t('bot_config.platform_feishu')" value="feishu" />
+            <el-option :label="$t('bot_config.platform_qq')" value="qq" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="$t('bot_config.form_token')" required>
+          <el-input v-model="botForm.verify_token" :placeholder="$t('bot_config.form_token')" />
+        </el-form-item>
+        <el-form-item v-if="botForm.platform === 'wecom'" :label="$t('bot_config.form_aes_key')" required>
+          <el-input v-model="botForm.encoding_aes_key" :placeholder="$t('bot_config.form_aes_key')" />
+        </el-form-item>
+        <el-form-item v-if="botForm.platform === 'wecom'" :label="$t('bot_config.form_corp_id')" required>
+          <el-input v-model="botForm.corp_id" :placeholder="$t('bot_config.form_corp_id')" />
+        </el-form-item>
+        <el-form-item v-if="botForm.platform === 'feishu' || botForm.platform === 'qq'" :label="$t('bot_config.form_app_secret')" required>
+          <el-input v-model="botForm.app_secret" :placeholder="$t('bot_config.form_app_secret')" />
+        </el-form-item>
+        <el-form-item>
+          <el-checkbox v-model="botForm.enabled" :label="$t('common.enabled')" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="botModal = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="saveBot" :disabled="!canSaveBot">
+          {{ $t('common.save') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -937,6 +1030,7 @@ import {
   databaseServiceApi,
   sqlApi,
   sqlSnippetApi,
+  botConfigApi,
 } from '@/api'
 import { useProjectStore, useToastStore } from '@/stores'
 import { fmt } from '@/utils'
@@ -959,6 +1053,18 @@ const discovering = ref(false)
 const testResult = ref(null)
 const loading = ref(true)
 const activeNames = ref([''])
+const llmFormRef = ref(null)
+
+// 自定义LLM提供商字段校验：仅当 provider==='custom' 时生效
+const llmFormRules = computed(() => ({
+  base_url: form.value.provider === 'custom' ? [
+    { required: true, message: t('settings.llm_base_url_required'), trigger: 'blur' },
+    { pattern: /^https?:\/\/.+/, message: t('settings.llm_base_url_invalid'), trigger: 'blur' },
+  ] : [],
+  model: form.value.provider === 'custom' ? [
+    { required: true, message: t('settings.llm_model_required'), trigger: 'blur' },
+  ] : [],
+}))
 
 const form = ref({
   provider: 'openai',
@@ -1050,6 +1156,14 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
+  // 自定义LLM提供商：校验 base_url 和 model 非空
+  if (form.value.provider === 'custom' && llmFormRef.value) {
+    try {
+      await llmFormRef.value.validate()
+    } catch {
+      return  // validate() 已自动展示错误提示
+    }
+  }
   if (!isLocalPreset.value && !form.value.api_key.trim()) {
     toast.error(t('settings.llm_empty_key_hint'))
     return
@@ -1636,6 +1750,7 @@ function onTabChange(tab) {
   if (tab === 'database') loadDatabaseTab()
   if (tab === 'projects') loadProjects()
   if (tab === 'alert-channels') loadChannels()
+  if (tab === 'bots') loadBots()
   if (tab === 'general') loadGeneralSettings()
 }
 
@@ -2042,6 +2157,120 @@ function typeTagType(type) {
   return map[type] || 'info'
 }
 
+// ── 机器人接入管理 (Bot 集成：企业微信/飞书/QQ) ──
+const bots = ref([])
+const botsLoading = ref(false)
+const botModal = ref(false)
+const editingBotId = ref(null)
+
+const defaultBotForm = () => ({ name: '', platform: 'wecom', verify_token: '', app_secret: '', encoding_aes_key: '', corp_id: '', enabled: true })
+const botForm = ref(defaultBotForm())
+
+const canSaveBot = computed(() => {
+  const f = botForm.value
+  if (!f.name || !f.platform || !f.verify_token) return false
+  if (f.platform === 'wecom' && (!f.encoding_aes_key || !f.corp_id)) return false
+  if ((f.platform === 'feishu' || f.platform === 'qq') && !f.app_secret) return false
+  return true
+})
+
+function botWebhookUrl(id) {
+  return id ? `${location.origin}/api/bot/webhook` : '-'
+}
+
+function botPlatformLabel(platform) {
+  const map = { wecom: t('bot_config.platform_wecom'), feishu: t('bot_config.platform_feishu'), qq: t('bot_config.platform_qq') }
+  return map[platform] || platform
+}
+function botPlatformTagType(platform) {
+  const map = { wecom: 'success', feishu: 'primary', qq: 'info' }
+  return map[platform] || 'info'
+}
+
+async function loadBots() {
+  botsLoading.value = true
+  try {
+    const res = await botConfigApi.list({ project_id: projectStore.current })
+    bots.value = res.items || []
+  } catch (e) {
+    toast.error(e.message || t('settings.load_failed'))
+    bots.value = []
+  } finally {
+    botsLoading.value = false
+  }
+}
+
+function openBotCreate() {
+  editingBotId.value = null
+  botForm.value = defaultBotForm()
+  botModal.value = true
+}
+
+function editBot(row) {
+  editingBotId.value = row.id
+  botForm.value = {
+    name: row.name,
+    platform: row.platform,
+    verify_token: row.verify_token || '',
+    app_secret: row.app_secret || '',
+    encoding_aes_key: row.encoding_aes_key || '',
+    corp_id: row.corp_id || '',
+    enabled: row.enabled,
+  }
+  botModal.value = true
+}
+
+function resetBotForm() {
+  botForm.value = defaultBotForm()
+  editingBotId.value = null
+}
+
+async function saveBot() {
+  try {
+    const payload = { ...botForm.value, project_id: projectStore.current }
+    if (editingBotId.value) {
+      await botConfigApi.update(editingBotId.value, payload)
+      toast.success(t('settings.saved'))
+    } else {
+      await botConfigApi.create(payload)
+      toast.success(t('settings.saved'))
+    }
+    botModal.value = false
+    await loadBots()
+  } catch (e) {
+    toast.error(e.message)
+  }
+}
+
+async function toggleBotEnabled(row) {
+  try {
+    await botConfigApi.update(row.id, { ...row, enabled: !row.enabled })
+    toast.success(row.enabled ? t('alert_channels.toast_disabled') : t('alert_channels.toast_enabled'))
+    await loadBots()
+  } catch (e) { toast.error(e.message) }
+}
+
+async function deleteBot(row) {
+  try {
+    await ElMessageBox.confirm(t('settings.delete_confirm', { name: row.name }), t('common.confirm'), { type: 'warning' })
+    await botConfigApi.remove(row.id)
+    toast.success(t('settings.deleted'))
+    await loadBots()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close' && e.message) toast.error(e.message)
+  }
+}
+
+async function copyBotWebhook(id) {
+  try {
+    const url = botWebhookUrl(id)
+    await navigator.clipboard?.writeText(url)
+    toast.success(t('bot_config.copied'))
+  } catch {
+    toast.info(botWebhookUrl(id))
+  }
+}
+
 async function deleteProject(id) {
   try {
     await projectApi.remove(id)
@@ -2071,6 +2300,11 @@ onMounted(() => {
   if (route.query.tab === 'alert-channels') {
     activeTab.value = 'alert-channels'
     loadChannels()
+  }
+  // 支持通过 ?tab=bots 深度链接机器人接入管理
+  if (route.query.tab === 'bots') {
+    activeTab.value = 'bots'
+    loadBots()
   }
 })
 </script>

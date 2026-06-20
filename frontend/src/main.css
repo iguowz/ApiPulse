@@ -220,3 +220,17 @@ button { cursor: pointer; border: none; background: none; font-family: inherit; 
 
 /* Main area */
 .main-area { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+/* ── Route transition ────────────────────────────────────── */
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+}
+
+/* ── Theme transition ────────────────────────────────────── */
+/* 主题切换时平滑过渡背景、文字、边框颜色 */
+* {
+  transition: background-color 0.3s ease, color 0.2s ease, border-color 0.2s ease;
+}

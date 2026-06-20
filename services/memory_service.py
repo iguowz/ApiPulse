@@ -187,10 +187,15 @@ class MemoryService:
         self._append_markdown_section(project_file, title, content, tags or [])
         return entry_id
 
-    async def search_l2(self, project_id: str, query: str, limit: int = 10, *, api_id: str | None = None) -> list[dict]:
+    async def search_l2(self, project_id: str | None, query: str, limit: int = 10, *,
+                        skip: int = 0, api_id: str | None = None) -> tuple[list[dict], int]:
         """在 L2 项目记忆中检索（MongoDB 关键词过滤），可选按 api_id 过滤。
-        获取项目下全部 L2 文档后做关键词评分，避免只取近期文档导致旧匹配条目被截断。"""
-        filt: dict[str, Any] = {"project_id": project_id}
+        获取项目下全部 L2 文档后做关键词评分，避免只取近期文档导致旧匹配条目被截断。
+        project_id=None 时不过滤项目，展示全部。
+        返回 (items, total) 元组，支持分页。"""
+        filt: dict[str, Any] = {}
+        if project_id:
+            filt["project_id"] = project_id
         if api_id:
             filt["tags"] = f"api:{api_id}"
         cursor = self._db["l2_memories"].find(filt).sort("updated_at", -1)
@@ -198,7 +203,7 @@ class MemoryService:
         for doc in docs:
             doc.pop("_id", None)
         if not query:
-            return docs[:limit]
+            return docs[skip:skip + limit], len(docs)
 
         query_lower = query.lower()
         scored: list[tuple[int, dict]] = []
@@ -214,7 +219,8 @@ class MemoryService:
             if score > 0:
                 scored.append((score, doc))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [doc for _, doc in scored[:limit]]
+        result = [doc for _, doc in scored]
+        return result[skip:skip + limit], len(result)
 
     async def delete_l2(self, entry_id: str) -> bool:
         """删除 L2 项目记忆条目。"""
@@ -260,11 +266,16 @@ class MemoryService:
         session_file = Path(self._working_dir, "sessions", f"{session_id}.md")
         self._append_markdown_section(session_file, "会话摘要", summary, tags or [])
 
-    async def search_l3(self, project_id: str, query: str, *,
-                        user_id: str | None = None, api_id: str | None = None, limit: int = 10) -> list[dict]:
-        """检索 L3 会话记忆（仅有效期内的条目），可选按 api_id 过滤。"""
+    async def search_l3(self, project_id: str | None, query: str, *,
+                        user_id: str | None = None, api_id: str | None = None,
+                        limit: int = 10, skip: int = 0) -> tuple[list[dict], int]:
+        """检索 L3 会话记忆（仅有效期内的条目），可选按 api_id 过滤。
+        project_id=None 时不过滤项目，展示全部。
+        返回 (items, total) 元组，支持分页。"""
         now = _beijing_now()
-        filt: dict[str, Any] = {"project_id": project_id, "expires_at": {"$gte": now}}
+        filt: dict[str, Any] = {"expires_at": {"$gte": now}}
+        if project_id:
+            filt["project_id"] = project_id
         if user_id:
             filt["user_id"] = user_id
         if api_id:
@@ -276,7 +287,7 @@ class MemoryService:
         for doc in docs:
             doc.pop("_id", None)
         if not query:
-            return docs[:limit]
+            return docs[skip:skip + limit], len(docs)
 
         query_lower = query.lower()
         scored: list[tuple[int, dict]] = []
@@ -290,7 +301,8 @@ class MemoryService:
             if score > 0:
                 scored.append((score, doc))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [doc for _, doc in scored[:limit]]
+        result = [doc for _, doc in scored]
+        return result[skip:skip + limit], len(result)
 
     # ── L4 对话记忆（Redis，仅活跃会话）─────────────────────
 
@@ -306,6 +318,11 @@ class MemoryService:
         key = f"{L4_PREFIX}:{user_id}:{session_id}"
         payload = json.dumps(messages[-40:], ensure_ascii=False)
         await self._redis.setex(key, ttl, payload)
+
+    async def delete_l3(self, session_id: str) -> bool:
+        """删除 L3 会话记忆（MongoDB 中按 session_id 删除）。"""
+        result = await self._db["l3_memories"].delete_one({"session_id": session_id})
+        return result.deleted_count > 0
 
     async def delete_l4(self, user_id: str, session_id: str) -> bool:
         """删除 L4 对话上下文。"""
@@ -481,13 +498,14 @@ class MemoryService:
 
     async def retrieve(
         self,
-        project_id: str,
+        project_id: str | None,
         query: str,
         *,
         user_id: str | None = None,
         limit: int = 10,
     ) -> dict[str, Any]:
-        """聚合检索 L1+L2+L3 记忆 + ReMe 语义检索。"""
+        """聚合检索 L1+L2+L3 记忆 + ReMe 语义检索。
+        project_id=None 时不过滤项目，展示全部。"""
         results: dict[str, Any] = {"l1": [], "l2": [], "l3": [], "semantic": []}
 
         # L1 关键词匹配
@@ -501,10 +519,12 @@ class MemoryService:
             ][:limit]
 
         # L2 项目记忆
-        results["l2"] = await self.search_l2(project_id, query, limit=limit)
+        l2_items, _ = await self.search_l2(project_id, query, limit=limit)
+        results["l2"] = l2_items
 
         # L3 会话记忆
-        results["l3"] = await self.search_l3(project_id, query, user_id=user_id, limit=limit)
+        l3_items, _ = await self.search_l3(project_id, query, user_id=user_id, limit=limit)
+        results["l3"] = l3_items
 
         # ReMe 语义检索
         results["semantic"] = await self.semantic_search(query, max_results=limit)
@@ -528,11 +548,13 @@ class MemoryService:
 
     async def save_session_to_l3(
         self, user_id: str, session_id: str, project_id: str, messages: list[dict[str, Any]],
+        *, tags: list[str] | None = None,
     ) -> str:
         """保存会话快照到 L3 但不删除 L4，用于 AI 对话过程中持续记录。
 
         优先使用 ReMe 生成结构化摘要，不可用时回退为提取首条用户消息作为标题。
         每次调用会更新同 session_id 的已有 L3 记录（upsert），避免重复条目。
+        tags 用于标记会话场景（如 user:xxx, page:api），便于记忆列表筛选展示。
         """
         if not messages:
             return ""
@@ -552,13 +574,13 @@ class MemoryService:
         # 3. Upsert L3：同一 session_id + project_id 只保留最新一条，避免跨项目冲突
         existing = await self._db["l3_memories"].find_one({"session_id": session_id, "project_id": project_id})
         if existing:
-            # 更新摘要时会话仍活跃 → 重置 expires_at 为 30 天后，避免活跃会话因 TTL 过期被清理
+            # 更新摘要时会话仍活跃 → 重置 expires_at 为 30 天后；同时更新 tags
             await self._db["l3_memories"].update_one(
                 {"session_id": session_id, "project_id": project_id},
-                {"$set": {"summary": summary, "updated_at": _beijing_now(), "expires_at": _beijing_now() + timedelta(days=30)}},
+                {"$set": {"summary": summary, "tags": tags or [], "updated_at": _beijing_now(), "expires_at": _beijing_now() + timedelta(days=30)}},
             )
         else:
-            await self.record_l3(session_id, project_id, summary, user_id=user_id)
+            await self.record_l3(session_id, project_id, summary, user_id=user_id, tags=tags)
 
         return summary
 

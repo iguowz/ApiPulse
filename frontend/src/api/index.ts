@@ -276,6 +276,7 @@ export const memoryApi = {
   listL2:   (params?: Params): Promise<any>  => http.get('/memory/l2', { params }),
   deleteL2: (id: ID): Promise<any>           => http.delete(`/memory/l2/${id}`),
   listL3:   (params?: Params): Promise<any>  => http.get('/memory/l3', { params }),
+  deleteL3: (sessionId: string): Promise<any> => http.delete(`/memory/l3/${sessionId}`),
   search:   (params?: Params): Promise<any>  => http.post('/memory/search', null, { params }),
 }
 
@@ -373,6 +374,15 @@ export const statsApi = {
 // ── System ───────────────────────────────────────────────────
 export const systemApi = {
   queues: (): Promise<any> => http.get('/system/queues'),
+}
+
+// Phase 3: Bot 配置管理
+export const botConfigApi = {
+  list: (params?: Record<string, any>): Promise<any> => http.get('/bot-configs', { params }),
+  create: (data: Record<string, any>): Promise<any> => http.post('/bot-configs', data),
+  update: (id: string, data: Record<string, any>): Promise<any> => http.put(`/bot-configs/${id}`, data),
+  remove: (id: string): Promise<any> => http.delete(`/bot-configs/${id}`),
+  webhookUrl: (id: string): Promise<any> => http.get(`/bot-configs/${id}/webhook-url`),
 }
 
 // ── WebSocket helper ─────────────────────────────────────────

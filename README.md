@@ -38,6 +38,7 @@
 | **差异比对** | 导入时自动检测 API 字段变化，AI 评估差异，支持确认/修复/忽略 |
 | **Mock 服务** | 基于 API DSL 自动生成 Mock 端点，支持动态响应模板 |
 | **SQL 数据源** | 支持 PostgreSQL / MySQL 作为数据源，SQL 运行时执行与断言 |
+| **Bot 接入** | 支持企业微信 / QQ / 飞书机器人接入，IM 端直接与 AI 助手对话，支持确认流和多轮会话 |
 | **生成版本管理** | AI 生成结果的版本追踪、对比与回溯 |
 | **多租户 RBAC** | admin / editor / viewer / monitor_admin 四角色，JWT + bcrypt + API Key 认证 |
 
@@ -209,7 +210,8 @@ ApiPulse/
 │   ├── state.py                   # 共享服务实例注入
 │   ├── ws_manager.py              # WebSocket 连接管理
 │   ├── deps.py                    # 依赖注入（认证/鉴权）
-│   └── routers/                   # 27 个路由模块
+│   ├── page_knowledge.py           # 页面知识库（15 种页面类型，用于 AI 助手 system prompt）
+│   └── routers/                   # 30 个路由模块
 │       ├── auth.py                # 登录/注册/用户管理
 │       ├── apis.py                # API 资产 CRUD + 运行
 │       ├── ai_chat.py             # AI 对话分析
@@ -235,6 +237,9 @@ ApiPulse/
 │       ├── settings_llm.py        # LLM 配置
 │       ├── settings_general.py    # 通用设置
 │       ├── ai_operation_logs.py   # AI 操作日志
+│       ├── bot_configs.py         # Bot 配置 (Phase 3: 企微/QQ/飞书)
+│       ├── bot_webhook.py          # Bot Webhook 接收
+│       ├── memory.py               # 记忆模块扩展接口
 │       ├── system.py              # 系统健康检查
 │       └── audit.py               # 审计日志
 ├── ai_analyzer/
@@ -256,7 +261,7 @@ ApiPulse/
 │   └── service.py                 # ReMe 四层记忆系统 (L1/L2/L3/L4)
 ├── mitmproxy_capture/
 │   └── capture_addon.py           # mitmproxy 实时抓包插件
-├── services/                      # 15 个业务服务
+├── services/                      # 16 个业务服务
 │   ├── api_service.py             # API 资产业务逻辑
 │   ├── scenario_service.py        # 场景编排服务
 │   ├── stats_service.py           # 统计聚合服务
@@ -271,6 +276,7 @@ ApiPulse/
 │   ├── curl_parser.py             # cURL 命令解析
 │   ├── structured_output_service.py # 结构化输出
 │   ├── ai_operation_log_service.py  # AI 操作日志
+│   ├── bot_message_service.py     # Bot 消息编排 (Phase 3)
 │   └── audit_service.py           # 审计服务
 ├── models/
 │   ├── dsl.py                     # 核心 DSL 模型
@@ -281,6 +287,7 @@ ApiPulse/
 │   ├── mock_service.py            # Mock 服务模型
 │   ├── prompt_template.py         # Prompt 模板模型
 │   ├── database_service.py        # 数据库服务模型
+│   ├── bot_config.py              # Bot 配置模型
 │   ├── audit.py                   # 审计日志模型
 │   └── ai_operation_log.py        # AI 操作日志模型
 ├── config/

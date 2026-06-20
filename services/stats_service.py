@@ -741,15 +741,24 @@ class StatsService:
         # 场景引用: scenarios.steps[].api_id + scenarios.api_ids
         scenario_docs = await self.db["scenarios"].find(
             {"project_id": project_id},
-            {"steps.api_id": 1, "api_ids": 1, "_id": 0},
+            {"steps.api_id": 1, "api_ids": 1},
         ).to_list(length=None)
+        # P0-3: 构建 scenario_id -> api_ids 映射，供 monitor 间接引用使用
+        scenario_api_map: dict[str, set] = {}
         for s in scenario_docs:
+            sid = str(s.get("_id", ""))
+            if not sid:
+                continue
+            api_set = set()
             for step in s.get("steps") or []:
                 said = step.get("api_id")
                 if said:
                     scenario_api_ids.add(said)
+                    api_set.add(said)
             for aid in s.get("api_ids") or []:
                 scenario_api_ids.add(aid)
+                api_set.add(aid)
+            scenario_api_map[sid] = api_set
 
         # 监控器引用: monitors.api_ids
         monitor_docs = await self.db["monitors"].find(
@@ -761,10 +770,10 @@ class StatsService:
             # 对 monitor 而言：直接引用 api_ids，或间接通过场景的 api_ids
             for aid in m.get("api_ids") or []:
                 monitor_api_ids.add(aid)
-            # 场景覆盖：monitor 引用的 scenario 会导致其下的 API 也被监控覆盖
+            # P0-3: 场景覆盖——monitor 引用的 scenario 导致其下的 API 也被监控覆盖
             for sid in m.get("scenario_ids") or []:
-                # 已在 scenario 查询中获取，此处只需标记 scenario 下的 API
-                pass
+                if sid in scenario_api_map:
+                    monitor_api_ids.update(scenario_api_map[sid])
 
         # 执行记录: executions.api_id（去重）
         exec_pipeline = [
@@ -803,6 +812,31 @@ class StatsService:
             monitor_covered = sum(1 for aid in mids if aid in monitor_api_ids)
             execute_covered = sum(1 for aid in mids if aid in execute_api_ids)
 
+            # 按维度收集未覆盖 API（用于 AI 精准回答覆盖盲区）
+            uncovered_apis: list[dict[str, Any]] = []
+            for aid in mids:
+                api_doc_entry = next((d for d in api_docs if d.get("id") == aid), {})
+                path = (api_doc_entry.get("request") or {}).get("path", "") or ""
+                inner_doc = api_doc_entry.get("doc") or {}
+                has_doc = bool(inner_doc.get("summary") or inner_doc.get("description"))
+                has_asserts = len(api_doc_entry.get("asserts") or []) > 0
+                in_scenario = aid in scenario_api_ids
+                in_monitor = aid in monitor_api_ids
+                in_execute = aid in execute_api_ids
+                uncovered_dims = []
+                if not has_doc:
+                    uncovered_dims.append("doc")
+                if not has_asserts:
+                    uncovered_dims.append("asserts")
+                if not in_scenario:
+                    uncovered_dims.append("scenario")
+                if not in_monitor:
+                    uncovered_dims.append("monitor")
+                if not in_execute:
+                    uncovered_dims.append("execute")
+                if uncovered_dims:
+                    uncovered_apis.append({"api_id": aid, "path": path, "uncovered_dimensions": uncovered_dims})
+
             matrix.append({
                 "module": module,
                 "total": total,
@@ -811,6 +845,7 @@ class StatsService:
                 "scenario": round(scenario_covered / total * 100 if total else 0),
                 "monitor": round(monitor_covered / total * 100 if total else 0),
                 "execute": round(execute_covered / total * 100 if total else 0),
+                "uncovered_apis": uncovered_apis,
             })
 
         # 全局汇总
@@ -823,11 +858,24 @@ class StatsService:
             "scenario": round(len(scenario_api_ids & api_ids) / max(total_apis, 1) * 100),
             "monitor": round(len(monitor_api_ids & api_ids) / max(total_apis, 1) * 100),
             "execute": round(len(execute_api_ids & api_ids) / max(total_apis, 1) * 100),
+            "uncovered_apis": [],
         })
+
+        # 每个维度的未覆盖 API 汇总（供 AI 快速定位覆盖率短板）
+        dimension_summary = {}
+        for dim in ["doc", "asserts", "scenario", "monitor", "execute"]:
+            # 收集所有模块中该维度未覆盖的 API ID
+            uncovered_ids: list[str] = []
+            for row in matrix:
+                for api_info in row.get("uncovered_apis", []):
+                    if dim in api_info.get("uncovered_dimensions", []) and api_info.get("api_id") not in uncovered_ids:
+                        uncovered_ids.append(api_info["api_id"])
+            dimension_summary[dim] = {"uncovered_count": len(uncovered_ids), "uncovered_ids": uncovered_ids[:20]}
 
         return {
             "project_id": project_id,
             "dimensions": ["doc", "asserts", "scenario", "monitor", "execute"],
             "modules": [m["module"] for m in matrix],
             "matrix": matrix,
+            "dimension_summary": dimension_summary,
         }

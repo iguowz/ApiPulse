@@ -118,7 +118,9 @@
     </aside>
 
     <main class="main-area">
-      <RouterView />
+      <transition name="fade" mode="out-in">
+        <RouterView />
+      </transition>
     </main>
 
     <!-- P1-3: 全局 AI 助手浮窗（Cmd/Ctrl+K 唤起） -->
@@ -156,8 +158,11 @@ const currentProjectFilterActive = computed(() => {
   return allow.length > 0 || block.length > 0
 })
 
-// ── 日夜主题切换：默认暗色，偏好存入 localStorage ──
-const theme = ref(localStorage.getItem('apipulse-theme') || 'dark')
+// ── 日夜主题切换：已存偏好优先，无存储时检测系统配色方案 ──
+const theme = ref(
+  localStorage.getItem('apipulse-theme') ||
+  (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+)
 
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t)

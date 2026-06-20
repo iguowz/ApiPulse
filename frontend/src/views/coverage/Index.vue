@@ -9,12 +9,27 @@
     </div>
 
     <div class="page-body" v-loading="loading">
-      <!-- 空状态 -->
-      <div v-if="!loading && matrix.length === 0" class="empty-state">
-        <p>{{ $t('coverage.empty') }}</p>
-      </div>
+      <!-- 错误状态 -->
+      <el-alert
+        v-if="!loading && error"
+        type="error"
+        :title="$t('coverage.loadError')"
+        :description="error"
+        show-icon
+        closable
+        style="margin-bottom:16px"
+      >
+        <template #default>
+          <el-button size="small" type="primary" @click="load" style="margin-top:8px">
+            {{ $t('coverage.retry') }}
+          </el-button>
+        </template>
+      </el-alert>
 
-      <template v-else>
+      <!-- 空状态 -->
+      <el-empty v-if="!loading && !error && matrix.length === 0" :description="$t('coverage.empty')" />
+
+      <template v-if="matrix.length > 0">
         <!-- 汇总卡 -->
         <div class="summary-row">
           <div class="summary-item">
@@ -92,6 +107,7 @@ const projectStore = useProjectStore()
 const toast = useToastStore()
 
 const loading = ref(false)
+const error = ref('')
 const matrix = ref([])
 const dimensions = ['doc', 'asserts', 'scenario', 'monitor', 'execute']
 
@@ -124,12 +140,13 @@ function heatColor(pct) {
 
 async function load() {
   loading.value = true
+  error.value = ''
   try {
     const res = await statsApi.coverage(projectStore.current || 'default')
     matrix.value = res.matrix || []
   } catch (e) {
     console.error('Failed to load coverage:', e)
-    toast.error(e.message || '加载覆盖率数据失败')
+    error.value = e.message || '加载覆盖率数据失败'
     matrix.value = []
   } finally {
     loading.value = false

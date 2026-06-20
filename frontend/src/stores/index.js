@@ -27,8 +27,10 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   function select(id) {
+    // P0-1: 当 id 为 null/undefined 时删除 key，避免写入字符串 "undefined"
     current.value = id
-    localStorage.setItem('aqp_project', id)
+    if (id) localStorage.setItem('aqp_project', id)
+    else localStorage.removeItem('aqp_project')
   }
 
   async function create(data) {

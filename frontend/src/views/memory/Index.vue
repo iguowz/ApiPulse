@@ -14,12 +14,13 @@
       <el-button size="small" type="primary" @click="doSearch" :loading="searching">
         {{ $t('memory.search') }}
       </el-button>
-      <!-- 项目下拉切换：选项来自已添加的项目 -->
+      <!-- 项目下拉切换：选项来自已添加的项目，可清除展示全部 -->
       <el-select
         v-model="projectStore.current"
         size="small"
         style="width:200px;margin-left:12px"
         :placeholder="$t('memory.selectProject')"
+        clearable
         @change="onProjectChange"
       >
         <el-option
@@ -127,9 +128,17 @@
                 </template>
               </el-table-column>
             </el-table>
-            <!-- L2 总数 -->
+            <!-- L2 分页 -->
             <div class="flex-between" style="padding:12px 16px">
-              <span class="text-3">{{ $t('memory.totalItems', { n: l2Items.length }) }}</span>
+              <span class="text-3">{{ $t('memory.totalItems', { n: l2Total }) }}</span>
+              <el-pagination
+                v-model:current-page="l2Page"
+                :page-size="l2PageSize"
+                :total="l2Total"
+                layout="prev,next"
+                small
+                @current-change="loadL2"
+              />
             </div>
           </el-card>
         </el-tab-pane>
@@ -163,10 +172,28 @@
               <el-table-column :label="$t('memory.colExpiresAt')" width="160">
                 <template #default="{ row }">{{ row.expires_at || '—' }}</template>
               </el-table-column>
+              <!-- P1-3: L3 删除按钮（后端已有 DELETE /memory/l3/{session_id} 端点） -->
+              <el-table-column :label="$t('memory.colAction')" width="80" align="center">
+                <template #default="{ row }">
+                  <el-popconfirm :title="$t('memory.confirmDeleteL3')" @confirm="removeL3(row.session_id)">
+                    <template #reference>
+                      <el-button type="danger" size="small" text>{{ $t('memory.delete') }}</el-button>
+                    </template>
+                  </el-popconfirm>
+                </template>
+              </el-table-column>
             </el-table>
-            <!-- L3 总数 -->
+            <!-- L3 分页 -->
             <div class="flex-between" style="padding:12px 16px">
-              <span class="text-3">{{ $t('memory.totalItems', { n: l3Items.length }) }}</span>
+              <span class="text-3">{{ $t('memory.totalItems', { n: l3Total }) }}</span>
+              <el-pagination
+                v-model:current-page="l3Page"
+                :page-size="l3PageSize"
+                :total="l3Total"
+                layout="prev,next"
+                small
+                @current-change="loadL3"
+              />
             </div>
           </el-card>
         </el-tab-pane>
@@ -222,17 +249,17 @@
 <script setup>
 import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
 import { memoryApi } from '@/api'
-import { useProjectStore } from '@/stores'
+import { useProjectStore, useToastStore } from '@/stores'
 
 const { t } = useI18n()
 const projectStore = useProjectStore()
+const toast = useToastStore()
 
 const activeTab = ref('l1')
 const searchQuery = ref('')
-// 使用 store 获取当前项目，确保切换项目后 L2/L3 列表显示对应数据
-const projectId = computed(() => projectStore.current || 'default')
+// 使用 store 获取当前项目；为 null 时不传 project_id（后端返回全部项目数据）
+const projectId = computed(() => projectStore.current || null)
 const searching = ref(false)
 const searchResults = ref(null)
 
@@ -245,9 +272,15 @@ const l1Page = ref(1)
 
 // L2 state
 const l2Items = ref([])
+const l2Total = ref(0)
+const l2Page = ref(1)
+const l2PageSize = 30
 
 // L3 state
 const l3Items = ref([])
+const l3Total = ref(0)
+const l3Page = ref(1)
+const l3PageSize = 30
 
 // ── loaders ───────────────────────────────────────────────────
 
@@ -261,7 +294,7 @@ async function loadL1() {
     l1Items.value = res.items || []
     l1Total.value = res.total || 0
   } catch (e) {
-    ElMessage.error(t('memory.loadFailed'))
+    toast.error(t('memory.loadFailed'))
     console.error('loadL1 failed:', e)
   } finally {
     loading.l1 = false
@@ -271,12 +304,15 @@ async function loadL1() {
 async function loadL2() {
   loading.l2 = true
   try {
-    const params = { project_id: projectId.value, limit: 200 }
+    const params = { skip: (l2Page.value - 1) * l2PageSize, limit: l2PageSize }
+    // 不选项目时，不传 project_id，后端返回全部项目数据
+    if (projectId.value) params.project_id = projectId.value
     if (searchQuery.value) params.search = searchQuery.value
     const res = await memoryApi.listL2(params)
     l2Items.value = res.items || []
+    l2Total.value = res.total || 0
   } catch (e) {
-    ElMessage.error(t('memory.loadFailed'))
+    toast.error(t('memory.loadFailed'))
     console.error('loadL2 failed:', e)
   } finally {
     loading.l2 = false
@@ -286,12 +322,14 @@ async function loadL2() {
 async function loadL3() {
   loading.l3 = true
   try {
-    const params = { project_id: projectId.value, limit: 200 }
+    const params = { skip: (l3Page.value - 1) * l3PageSize, limit: l3PageSize }
+    if (projectId.value) params.project_id = projectId.value
     if (searchQuery.value) params.search = searchQuery.value
     const res = await memoryApi.listL3(params)
     l3Items.value = res.items || []
+    l3Total.value = res.total || 0
   } catch (e) {
-    ElMessage.error(t('memory.loadFailed'))
+    toast.error(t('memory.loadFailed'))
     console.error('loadL3 failed:', e)
   } finally {
     loading.l3 = false
@@ -302,10 +340,11 @@ async function doSearch() {
   searching.value = true
   searchResults.value = null
   try {
-    const params = { project_id: projectId.value, query: searchQuery.value || '', limit: 10 }
+    const params = { query: searchQuery.value || '', limit: 10 }
+    if (projectId.value) params.project_id = projectId.value
     searchResults.value = await memoryApi.search(params)
   } catch (e) {
-    ElMessage.error(t('memory.loadFailed'))
+    toast.error(t('memory.loadFailed'))
     console.error('search failed:', e)
   } finally {
     searching.value = false
@@ -320,6 +359,8 @@ function loadActive() {
 
 /* 项目下拉切换：调用 store.select() 同步状态，loadActive 由 watch 自动触发 */
 function onProjectChange(newId) {
+  l2Page.value = 1
+  l3Page.value = 1
   projectStore.select(newId)
 }
 
@@ -330,7 +371,7 @@ async function removeL1(key) {
     await memoryApi.deleteL1(key)
     loadL1()
   } catch (e) {
-    ElMessage.error(t('memory.deleteFailed'))
+    toast.error(t('memory.deleteFailed'))
     console.error('delete L1 failed:', e)
   }
 }
@@ -340,8 +381,19 @@ async function removeL2(id) {
     await memoryApi.deleteL2(id)
     loadL2()
   } catch (e) {
-    ElMessage.error(t('memory.deleteFailed'))
+    toast.error(t('memory.deleteFailed'))
     console.error('delete L2 failed:', e)
+  }
+}
+
+// P1-3: 删除 L3 会话记忆
+async function removeL3(sessionId) {
+  try {
+    await memoryApi.deleteL3(sessionId)
+    loadL3()
+  } catch (e) {
+    toast.error(t('memory.deleteFailed'))
+    console.error('delete L3 failed:', e)
   }
 }
 

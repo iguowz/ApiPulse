@@ -66,18 +66,20 @@ async def delete_l1(key: str, request: Request = None, user: dict = Depends(requ
 
 @router.get("/memory/l2")
 async def list_l2(
-    project_id: str = Query(default="default"),
+    project_id: str | None = Query(default=None),
     search: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
     limit: int = Query(default=30, ge=1, le=200),
     api_id: str | None = Query(default=None),
     request: Request = None,
     user: dict = Depends(get_current_user),
 ):
-    """列出/检索 L2 项目记忆（按 project_id 隔离），可选按 api_id 过滤。"""
+    """列出/检索 L2 项目记忆（按 project_id 隔离），可选按 api_id 过滤。
+    project_id 为空时展示全部（admin 可见所有项目数据）。"""
     ensure_project_access(user, project_id)
     memory = _get_memory()
-    items = await memory.search_l2(project_id, search or "", limit=limit, api_id=api_id)
-    return {"total": len(items), "items": items}
+    items, total = await memory.search_l2(project_id, search or "", limit=limit, skip=skip, api_id=api_id)
+    return {"total": total, "items": items}
 
 
 @router.delete("/memory/l2/{entry_id}")
@@ -92,34 +94,49 @@ async def delete_l2(entry_id: str, request: Request = None, user: dict = Depends
 
 # ── L3 会话记忆 ──────────────────────────────────────────────
 
+@router.delete("/memory/l3/{session_id}")
+async def delete_l3(session_id: str, request: Request = None, user: dict = Depends(require_auth)):
+    """删除 L3 会话记忆（P1-3）。"""
+    memory = _get_memory()
+    deleted = await memory.delete_l3(session_id)
+    if not deleted:
+        raise HTTPException(404, "L3 session memory not found")
+    return {"ok": True, "session_id": session_id}
+
+
+
+
 @router.get("/memory/l3")
 async def list_l3(
-    project_id: str = Query(default="default"),
+    project_id: str | None = Query(default=None),
     search: str | None = Query(default=None),
     user_id: str | None = Query(default=None),
     api_id: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
     limit: int = Query(default=30, ge=1, le=200),
     request: Request = None,
     user: dict = Depends(get_current_user),
 ):
-    """列出/检索 L3 会话记忆（仅有效期内的条目），可选按 api_id 过滤。"""
+    """列出/检索 L3 会话记忆（仅有效期内的条目），可选按 api_id 过滤。
+    project_id 为空时展示全部（admin 可见所有项目数据）。"""
     ensure_project_access(user, project_id)
     memory = _get_memory()
-    items = await memory.search_l3(project_id, search or "", user_id=user_id, api_id=api_id, limit=limit)
-    return {"total": len(items), "items": items}
+    items, total = await memory.search_l3(project_id, search or "", user_id=user_id, api_id=api_id, limit=limit, skip=skip)
+    return {"total": total, "items": items}
 
 
 # ── 聚合检索 ──────────────────────────────────────────────────
 
 @router.post("/memory/search")
 async def search_memory(
-    project_id: str = Query(default="default"),
+    project_id: str | None = Query(default=None),
     query: str = Query(default=""),
     limit: int = Query(default=10, ge=1, le=50),
     request: Request = None,
     user: dict = Depends(get_current_user),
 ):
-    """聚合检索 L1+L2+L3 + ReMe 语义检索。"""
+    """聚合检索 L1+L2+L3 + ReMe 语义检索。
+    project_id 为空时展示全部（admin 可见所有项目数据）。"""
     ensure_project_access(user, project_id)
     memory = _get_memory()
     results = await memory.retrieve(project_id, query, limit=limit)
