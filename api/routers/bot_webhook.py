@@ -19,7 +19,7 @@ from loguru import logger
 from config.database import get_db
 from models.bot_config import BotPlatform
 
-router = APIRouter(prefix="/api/bot/webhook", tags=["bot-webhook"])
+router = APIRouter(prefix="/bot/webhook", tags=["bot-webhook"])
 
 
 async def _find_bot_config(db: AsyncIOMotorDatabase, platform: str, config_id: str = "") -> dict[str, Any] | None:
@@ -98,6 +98,7 @@ async def wecom_receive(
 
     body = await request.body()
     body_str = body.decode("utf-8")
+    logger.info(f"WeCom message received: config_id={config_id}")
 
     # 解析 XML 消息体
     try:
@@ -169,6 +170,7 @@ async def feishu_receive(
     text = _feishu_extract_text(body)
     if not text:
         return {}
+    logger.info(f"Feishu message received: config_id={config_id}, user={body.get('open_id', 'unknown')}")
 
     # 异步处理
     async def _process():
@@ -210,6 +212,7 @@ async def qq_receive(
     text = _qq_extract_text(body)
     if not text:
         return {}
+    logger.info(f"QQ message received: config_id={config_id}, user={body.get('user_id', 'unknown')}")
 
     asyncio = __import__("asyncio")
 

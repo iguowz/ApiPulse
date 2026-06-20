@@ -25,7 +25,7 @@ logger.add(
     "logs/app.log",
     level="DEBUG",
     format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[request_id]} | {name}:{line} | {message}",
-    rotation="50 MB",
+    rotation="00:00",      # 每天午夜轮转，按日期打包
     retention="14 days",
     compression="zip",
     enqueue=True,   # 异步写，不阻塞事件循环

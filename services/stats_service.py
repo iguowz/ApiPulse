@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from bson import ObjectId
+from loguru import logger
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from config.settings import get_settings
@@ -35,6 +37,8 @@ class StatsService:
 
     async def get_overview(self, project_id: str = "default") -> dict[str, Any]:
         """项目全局概览：API/场景/执行/监控/告警/LLM 统计"""
+        t0 = time.monotonic()
+        logger.info(f"StatsService.get_overview: project_id={project_id}")
         pq = {"project_id": project_id}
 
         # 并行计数：asyncio.gather 同时发起所有独立查询，将 19 次串行等待合并为 1 轮
@@ -100,6 +104,8 @@ class StatsService:
         llm_configured = bool((llm_config and llm_config.get("api_key")) or s.openai_api_key)
         llm_model = (llm_config.get("model") if llm_config else None) or s.openai_model
 
+        elapsed = round((time.monotonic() - t0) * 1000, 1)
+        logger.info(f"StatsService.get_overview done: project_id={project_id}, apis={total_apis}, elapsed={elapsed}ms")
         return {
             "project_id": project_id,
             "apis": {
@@ -146,6 +152,7 @@ class StatsService:
 
     async def get_api_stats(self, api_id: str, limit: int = 50) -> dict[str, Any]:
         """单个 API 的执行趋势统计"""
+        logger.info(f"StatsService.get_api_stats: api_id={api_id}, limit={limit}")
         docs = await self.db["executions"].find(
             {"api_id": api_id, "type": "single"},
             {"_id": 0, "passed": 1, "started_at": 1, "duration_ms": 1},
@@ -169,6 +176,7 @@ class StatsService:
 
     async def get_scenario_stats(self, scenario_id: str, limit: int = 20) -> dict[str, Any]:
         """单个场景的执行统计"""
+        logger.info(f"StatsService.get_scenario_stats: scenario_id={scenario_id}, limit={limit}")
         docs = await self.db["executions"].find(
             {"scenario_id": scenario_id, "type": "scenario"},
             {"_id": 0, "passed": 1, "started_at": 1, "duration_ms": 1, "failure_reason": 1},
@@ -187,6 +195,7 @@ class StatsService:
         self, project_id: str = "default", limit: int = 10, hours: int = 24,
     ) -> dict[str, Any]:
         """聚合指定时间窗口内失败次数最多的 API"""
+        logger.info(f"StatsService.get_top_failing: project_id={project_id}, limit={limit}, hours={hours}")
         since = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None) - timedelta(hours=hours)
 
         pipeline = [
@@ -242,6 +251,7 @@ class StatsService:
         self, project_id: str = "default", limit: int = 50,
     ) -> dict[str, Any]:
         """综合成功率 + 响应时间 + 最近活跃度，计算每个 API 0-100 健康评分"""
+        logger.info(f"StatsService.get_health_scores: project_id={project_id}, limit={limit}")
         # 限制 500 条，防止项目 API 过多时内存溢出
         api_docs = await self.db["api_dsls"].find(
             {"project_id": project_id}, {"_id": 0, "id": 1, "name": 1, "request.method": 1, "request.path": 1},
@@ -316,6 +326,7 @@ class StatsService:
         self, project_id: str = "default", period: str = "24h", granularity: str = "hour",
     ) -> dict[str, Any]:
         """按时/天粒度统计执行通过率趋势"""
+        logger.info(f"StatsService.get_trends: project_id={project_id}, period={period}, granularity={granularity}")
         now = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
         if period == "24h":
             since = now - timedelta(hours=24)
@@ -364,6 +375,7 @@ class StatsService:
         self, project_id: str = "default", days: int = 30,
     ) -> dict[str, Any]:
         """团队活跃度：按日聚合场景执行次数、AI分析次数、手动执行次数"""
+        logger.info(f"StatsService.get_team_activity: project_id={project_id}, days={days}")
         now = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
         since = now - timedelta(days=days)
         date_fmt = "%Y-%m-%d"
@@ -439,6 +451,7 @@ class StatsService:
         self, project_id: str = "default", period: str = "30d",
     ) -> dict[str, Any]:
         """按 API 计算可用性百分比"""
+        logger.info(f"StatsService.get_sla: project_id={project_id}, period={period}")
         now = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
         days = 30 if period == "30d" else (7 if period == "7d" else 90)
         since = now - timedelta(days=days)
@@ -515,6 +528,7 @@ class StatsService:
 
     async def get_ai_quality(self, project_id: str = "default", period: str = "30d") -> dict[str, Any]:
         """聚合 AI 调用量、成功率、token 估算、审核积压和 DLQ 趋势。"""
+        logger.info(f"StatsService.get_ai_quality: project_id={project_id}, period={period}")
         now = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
         days = 7 if period == "7d" else (90 if period == "90d" else 30)
         since = now - timedelta(days=days)
@@ -708,6 +722,7 @@ class StatsService:
           monitor:  有活跃监控器的 API 占比
           execute:  有至少一次执行记录的 API 占比
         """
+        logger.info(f"StatsService.get_coverage: project_id={project_id}")
         # 1. 加载项目下所有 API 文档（仅投影覆盖度计算所需字段）
         api_docs = await self.db["api_dsls"].find(
             {"project_id": project_id},

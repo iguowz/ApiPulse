@@ -1,4 +1,5 @@
 import axios, { type AxiosResponse } from 'axios'
+import logger from '@/utils/logger'
 
 const http = axios.create({
   baseURL: '/api',
@@ -313,6 +314,7 @@ http.interceptors.response.use(
       localStorage.removeItem('aqp_user')
     }
     const msg = e.response?.data?.detail || e.message || 'Network error'
+    logger.error('API error:', e.response?.status, e.response?.config?.url, msg)
     return Promise.reject(new Error(typeof msg === 'string' ? msg : JSON.stringify(msg)))
   }
 )

@@ -2021,6 +2021,7 @@
     "col_type": "Type",
     "col_url": "Webhook URL",
     "col_status": "Status",
+    "empty": "No alert channels",
     "load_failed": "Failed to load alert channels",
     "toast_created": "Channel created",
     "toast_updated": "Channel updated",
@@ -2406,6 +2407,7 @@
     "copied": "Copied",
     "platform_wecom": "WeCom",
     "platform_qq": "QQ",
+    "empty": "No bot integrations",
     "platform_feishu": "Feishu"
   }
 }

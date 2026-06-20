@@ -7,7 +7,7 @@ services:
       MONGO_INITDB_DATABASE: api_quality
       TZ: Asia/Shanghai
     volumes:
-      - mongo_data:/data/db
+      - ./data/mongo:/data/db
     ports:
       - "27017:27017"
     healthcheck:
@@ -25,7 +25,7 @@ services:
     environment:
       TZ: Asia/Shanghai
     volumes:
-      - redis_data:/data
+      - ./data/redis:/data
     ports:
       - "6379:6379"
     healthcheck:
@@ -44,7 +44,7 @@ services:
       TZ: Asia/Shanghai
     command: server /data --console-address ":9001"
     volumes:
-      - minio_data:/data
+      - ./data/minio:/data
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -75,8 +75,8 @@ services:
       APP_ENV:         development
       LOG_LEVEL:       INFO
     volumes:
-      - quarantine_data:/tmp/quarantine
-      - backend_logs:/app/logs
+      - ./data/quarantine:/tmp/quarantine
+      - ./logs/backend:/app/logs
     ports:
       - "8000:8000"
     depends_on:
@@ -101,6 +101,8 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+    volumes:
+      - ./logs/nginx:/var/log/nginx
     ports:
       - "3000:80"
     depends_on:
@@ -111,13 +113,6 @@ services:
       interval: 20s
       timeout: 5s
       retries: 3
-
-volumes:
-  mongo_data:
-  redis_data:
-  minio_data:
-  quarantine_data:
-  backend_logs:
 
 networks:
   default:

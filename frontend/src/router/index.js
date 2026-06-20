@@ -19,6 +19,8 @@ const routes = [
   { path: '/knowledge',     name: 'Knowledge',     component: () => import('@/views/knowledge/Index.vue') },
   // 记忆页面已迁移至知识库 Tab（/knowledge?tab=memory 或直接切换标签页）
   { path: '/memory',        redirect: '/knowledge' },
+  // 机器人接入已迁移至设置页面 Tab（/settings?tab=bots）
+  { path: '/bot-configs',   redirect: '/settings?tab=bots' },
   // 文档说明页：新标签页打开，无侧边栏全屏展示，需登录认证
   { path: '/docs',          name: 'Docs',          component: () => import('@/views/docs/Index.vue'), meta: { plain: true } },
 

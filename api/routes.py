@@ -169,7 +169,7 @@ async def request_id_middleware(request: Request, call_next):
 # 说明：无 token 仍放行，后续 require_auth_middleware 会统一拦截非公开 HTTP 请求。
 _JWT_EXEMPT_PATHS = frozenset({"/auth/login", "/auth/register", "/health", "/docs", "/openapi.json", "/redoc"})
 # Phase 3: Bot Webhook 路径前缀（平台回调无需 JWT 认证）
-_BOT_WEBHOOK_PREFIX = "/api/bot/webhook/"
+_BOT_WEBHOOK_PREFIX = "/bot/webhook/"
 
 
 def _is_public_path(path: str) -> bool:

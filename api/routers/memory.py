@@ -9,6 +9,7 @@ L4: 对话记忆（Redis，仅活跃会话）—— 不暴露给前端
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from loguru import logger
 
 from api.deps import ensure_project_access, get_current_user, require_auth
 
@@ -59,6 +60,7 @@ async def delete_l1(key: str, request: Request = None, user: dict = Depends(requ
     deleted = await memory.delete_l1(key)
     if not deleted:
         raise HTTPException(404, "L1 memory entry not found")
+    logger.info(f"L1 memory deleted: key={key}")
     return {"ok": True, "key": key}
 
 
@@ -89,6 +91,7 @@ async def delete_l2(entry_id: str, request: Request = None, user: dict = Depends
     deleted = await memory.delete_l2(entry_id)
     if not deleted:
         raise HTTPException(404, "L2 memory entry not found")
+    logger.info(f"L2 memory deleted: entry_id={entry_id}")
     return {"ok": True, "id": entry_id}
 
 
@@ -101,6 +104,7 @@ async def delete_l3(session_id: str, request: Request = None, user: dict = Depen
     deleted = await memory.delete_l3(session_id)
     if not deleted:
         raise HTTPException(404, "L3 session memory not found")
+    logger.info(f"L3 session memory deleted: session_id={session_id}")
     return {"ok": True, "session_id": session_id}
 
 

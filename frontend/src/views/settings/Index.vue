@@ -594,7 +594,7 @@
               </div>
             </template>
 
-            <el-empty v-if="!channelsLoading && !channels.length" :description="$t('settings.dlq_empty')" :image-size="48" />
+            <el-empty v-if="!channelsLoading && !channels.length" :description="$t('alert_channels.empty')" :image-size="48" />
 
             <el-table v-else :data="channels" style="width:100%">
               <el-table-column :label="$t('alert_channels.col_name')" min-width="140">
@@ -643,7 +643,7 @@
               </div>
             </template>
 
-            <el-empty v-if="!botsLoading && !bots.length" :description="$t('settings.dlq_empty')" :image-size="48" />
+            <el-empty v-if="!botsLoading && !bots.length" :description="$t('bot_config.empty')" :image-size="48" />
 
             <el-table v-else :data="bots" style="width:100%">
               <el-table-column :label="$t('bot_config.col_name')" min-width="140">

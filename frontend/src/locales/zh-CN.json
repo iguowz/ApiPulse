@@ -2021,6 +2021,7 @@
     "col_type": "类型",
     "col_url": "Webhook URL",
     "col_status": "状态",
+    "empty": "暂无告警渠道",
     "load_failed": "加载告警渠道失败",
     "toast_created": "渠道创建成功",
     "toast_updated": "渠道更新成功",
@@ -2406,6 +2407,7 @@
     "copied": "已复制",
     "platform_wecom": "企业微信",
     "platform_qq": "QQ",
+    "empty": "暂无机器人接入",
     "platform_feishu": "飞书"
   }
 }

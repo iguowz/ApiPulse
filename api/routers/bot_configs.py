@@ -11,6 +11,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
@@ -18,7 +19,7 @@ from config.database import get_db
 from models.bot_config import BotConfig, BotPlatform
 from api.deps import get_current_user, user_has_permission
 
-router = APIRouter(prefix="/api/bot-configs", tags=["bot-configs"])
+router = APIRouter(prefix="/bot-configs", tags=["bot-configs"])
 
 
 class BotConfigCreate(BaseModel):
@@ -99,6 +100,7 @@ async def create_bot_config(
     doc = config.model_dump()
     await db["bot_configs"].insert_one(doc)
     doc.pop("_id", None)
+    logger.info(f"Bot config created: id={config.id}, platform={data.platform}, name={data.name}")
     return doc
 
 
@@ -122,6 +124,7 @@ async def update_bot_config(
     await db["bot_configs"].update_one({"id": config_id}, {"$set": updates})
 
     updated = await db["bot_configs"].find_one({"id": config_id}, {"_id": 0})
+    logger.info(f"Bot config updated: id={config_id}, fields={list(updates.keys())}")
     return updated
 
 
@@ -138,6 +141,7 @@ async def delete_bot_config(
     result = await db["bot_configs"].delete_one({"id": config_id})
     if not result.deleted_count:
         raise HTTPException(status_code=404, detail="Bot 配置不存在")
+    logger.info(f"Bot config deleted: id={config_id}")
     return {"ok": True, "message": "已删除"}
 
 
@@ -157,5 +161,5 @@ async def get_webhook_url(
     # 从 settings 获取部署域名，默认 localhost
     base_url = getattr(s, "deploy_host", "http://localhost:8000")
     platform = config.get("platform", "wecom")
-    webhook_url = f"{base_url}/api/bot/webhook/{platform}?config_id={config_id}"
+    webhook_url = f"{base_url}/bot/webhook/{platform}?config_id={config_id}"
     return {"webhook_url": webhook_url, "config_id": config_id}
