@@ -1,0 +1,120 @@
+services:
+  # ── MongoDB ─────────────────────────────────────────────
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: api_quality
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 20s
+
+  # ── Redis ────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MinIO ─────────────────────────────────────────────────
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+
+  # ── Backend ───────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      MONGO_URI:       mongodb://mongo:27017
+      MONGO_DB:        api_quality
+      REDIS_URL:       redis://redis:6379/0
+      MINIO_ENDPOINT:  minio:9000
+      # Mac Docker Desktop 需用 host.docker.internal 访问宿主机本地大模型
+      # Linux Docker 可改为 172.17.0.1 或宿主机 IP
+      LOCAL_LLM_HOST:  host.docker.internal
+      TZ:              Asia/Shanghai
+      # 本地 compose 使用 development，避免默认 JWT/CORS/admin 触发生产安全检查。
+      # 生产部署请通过环境变量或单独 compose override 设置 APP_ENV=production 并配置强密钥/域名/管理员密码。
+      APP_ENV:         development
+      LOG_LEVEL:       INFO
+    volumes:
+      - quarantine_data:/tmp/quarantine
+      - backend_logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Frontend ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  mongo_data:
+  redis_data:
+  minio_data:
+  quarantine_data:
+  backend_logs:
+
+networks:
+  default:
+    name: aqp_network

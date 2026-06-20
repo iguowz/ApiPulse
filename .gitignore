@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtualenv
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Node (frontend)
+node_modules/
+frontend/dist/
+
+# Logs & Data
+logs/
+*.log
+backend_logs/
+mnt/
+docs/
+CLAUDE.md
+AGENTS.md
+
+# Docker
+docker-compose.override.yml
+
+# Test
+.pytest_cache/
+
+# IDE / Assistant sessions
+.codex/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

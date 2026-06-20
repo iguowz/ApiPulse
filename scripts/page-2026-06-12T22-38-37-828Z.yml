@@ -1,0 +1,164 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: ▸
+      - generic [ref=e7]: AQP
+      - generic [ref=e8]: v4.0.0
+    - menubar [ref=e9]:
+      - menuitem "面板" [ref=e10] [cursor=pointer]:
+        - img [ref=e12]
+        - generic [ref=e17]: 面板
+      - menuitem "API 接口" [ref=e18] [cursor=pointer]:
+        - img [ref=e20]
+        - generic [ref=e22]: API 接口
+      - menuitem "场景" [ref=e23] [cursor=pointer]:
+        - img [ref=e25]
+        - generic [ref=e30]: 场景
+      - menuitem "数据工厂" [ref=e31] [cursor=pointer]:
+        - img [ref=e33]
+        - generic [ref=e35]: 数据工厂
+      - menuitem "审核中心" [ref=e36] [cursor=pointer]:
+        - img [ref=e38]
+        - generic [ref=e41]: 审核中心
+      - menuitem "覆盖度" [ref=e42] [cursor=pointer]:
+        - img [ref=e44]
+        - generic [ref=e50]: 覆盖度
+      - menuitem "知识库" [ref=e51] [cursor=pointer]:
+        - img [ref=e53]
+        - generic [ref=e57]: 知识库
+      - menuitem "巡检监控" [ref=e58] [cursor=pointer]:
+        - img [ref=e60]
+        - generic [ref=e62]: 巡检监控
+      - menuitem "执行历史" [ref=e63] [cursor=pointer]:
+        - img [ref=e65]
+        - generic [ref=e68]: 执行历史
+      - menuitem "导入差异" [ref=e69] [cursor=pointer]:
+        - img [ref=e71]
+        - generic [ref=e74]: 导入差异
+      - menuitem "用户管理" [ref=e75] [cursor=pointer]:
+        - img [ref=e77]
+        - generic [ref=e82]: 用户管理
+      - menuitem "设置" [ref=e83] [cursor=pointer]:
+        - img [ref=e85]
+        - generic [ref=e88]: 设置
+    - generic [ref=e89]:
+      - generic [ref=e90]:
+        - generic [ref=e91]: 项目
+        - generic [ref=e92]:
+          - generic [ref=e94] [cursor=pointer]:
+            - generic:
+              - combobox [ref=e96]
+              - generic [ref=e97]: 测试
+            - img [ref=e100]
+          - button "新建项目" [ref=e102] [cursor=pointer]:
+            - img [ref=e105]
+      - generic [ref=e107]:
+        - generic [ref=e108]: 执行环境
+        - generic [ref=e110] [cursor=pointer]:
+          - generic:
+            - combobox [ref=e112]
+            - generic [ref=e113]: 选择执行环境（可选）
+          - img [ref=e116]
+      - generic [ref=e118]:
+        - generic [ref=e119]: 主题
+        - generic [ref=e120]:
+          - switch [checked]
+          - img [ref=e123] [cursor=pointer]
+          - img [ref=e129] [cursor=pointer]
+      - generic [ref=e131]:
+        - generic [ref=e132]:
+          - generic [ref=e133]: A
+          - generic [ref=e134]:
+            - generic [ref=e135]: admin
+            - generic [ref=e136]: 管理员
+        - button "退出登录" [ref=e137] [cursor=pointer]:
+          - img [ref=e139]
+  - main [ref=e141]:
+    - generic [ref=e142]:
+      - generic [ref=e143]:
+        - generic [ref=e144]:
+          - button "← 返回" [ref=e145] [cursor=pointer]:
+            - generic [ref=e146]: ← 返回
+          - generic [ref=e147]:
+            - generic [ref=e148]:
+              - generic [ref=e230]: 失败
+              - generic [ref=e232]: 场景
+              - generic [ref=e234]: 手动
+            - generic [ref=e149]: b6bc29da-0965-4176-8e96-dd0c20fbcd2f
+        - generic [ref=e150]:
+          - button "下载报告" [ref=e151] [cursor=pointer]:
+            - generic [ref=e152]: 下载报告
+          - generic [ref=e153]:
+            - generic [ref=e154]: 步骤
+            - generic [ref=e155]: "1"
+          - generic [ref=e156]:
+            - generic [ref=e157]: 耗时
+            - generic [ref=e158]: 5.1s
+          - generic [ref=e159]:
+            - generic [ref=e160]: 开始时间
+            - generic [ref=e161]: 2026-06-07 16:08:58
+          - generic [ref=e162]:
+            - generic [ref=e163]: 执行人
+            - generic [ref=e164]: —
+          - generic [ref=e165]:
+            - generic [ref=e166]: 执行IP
+            - generic [ref=e167]: —
+          - generic [ref=e168]:
+            - generic [ref=e169]: 结束时间
+            - generic [ref=e170]: 2026-06-07 16:09:03
+      - generic [ref=e171]:
+        - generic [ref=e172]:
+          - generic [ref=e173]: ✕
+          - text: "ConnectError: 目标服务不可达 URL: POST https://tapp.chaboshi.cn/app/main_station/carSourcePromotion 原因: 建议: 检查目标服务是否正常运行、网络是否可达、URL 是否正确"
+        - generic [ref=e174]:
+          - generic [ref=e175]:
+            - generic [ref=e176]: ✅
+            - generic [ref=e177]: AI 诊断
+            - generic [ref=e236]: 诊断完成
+          - generic [ref=e178]:
+            - generic [ref=e179]:
+              - generic [ref=e180]: 根因分析
+              - generic [ref=e238]: 环境配置问题
+            - generic [ref=e181]:
+              - generic [ref=e182]: 置信度
+              - generic [ref=e183]: 50%
+            - generic [ref=e184]:
+              - generic [ref=e185]: 详细说明
+              - paragraph [ref=e186]: 连接错误显示目标服务不可达，表明域名解析失败或服务无响应，属于网络或环境配置问题。请求未成功建立连接导致无法获取有效响应数据。
+            - generic [ref=e187]:
+              - generic [ref=e188]: 修复建议
+              - paragraph [ref=e189]: 检查tapp.chaboshi.cn域名的DNS解析是否正常、确认服务端是否运行中、验证防火墙/代理规则是否拦截访问。建议通过curl命令手动测试该URL的连通性以定位具体环节。
+            - generic [ref=e190]:
+              - generic [ref=e191]: 诊断时间
+              - generic [ref=e192]: 2026-06-13 06:37:42
+        - generic [ref=e193]:
+          - generic [ref=e194] [cursor=pointer]:
+            - generic [ref=e195]: "01"
+            - generic [ref=e197]: step_1
+            - generic [ref=e198]: e84a1e5b-14f1-4329-9d69-ab908ec3a77e
+            - generic [ref=e199]:
+              - generic [ref=e240]: 失败
+              - generic [ref=e200]: 5040ms
+              - generic [ref=e201]: ▾
+          - generic [ref=e202]:
+            - generic [ref=e203]: "ConnectError: 目标服务不可达 URL: POST https://tapp.chaboshi.cn/app/main_station/carSourcePromotion 原因: 建议: 检查目标服务是否正常运行、网络是否可达、URL 是否正确"
+            - generic [ref=e204]:
+              - generic [ref=e205]:
+                - generic [ref=e206]: 请求
+                - generic [ref=e207]:
+                  - generic [ref=e208]:
+                    - generic [ref=e209]: METHOD
+                    - generic [ref=e210]: POST
+                  - generic [ref=e211]:
+                    - generic [ref=e212]: URL
+                    - generic [ref=e213]: https://tapp.chaboshi.cn/app/main_station/carSourcePromotion
+                - generic [ref=e214]:
+                  - generic [ref=e215]: 请求体
+                  - generic [ref=e216]: "{ \"appPhone\": \"137****0002\", \"imei\": \"123456789012345\", \"source\": \"app\", \"appversion\": \"1.0.0\", \"directAccessFromCompany\": \"\", \"appName\": \"TestApp\", \"appImei\": \"123456789012345\", \"appVersionCode\": \"1\", \"appVersionName\": \"1.0\", \"appPhoneModel\": \"iPhone12\", \"appSystemVersion\": \"14.0\", \"appLongitude\": \"116.397128\", \"appLatitude\": \"39.916527\", \"appNetState\": \"wifi\", \"appNetCarrier\": \"中国移动\", \"appRouterMacAddress\": \"00:11:22:33:44:55\", \"appCityId\": \"110100\", \"appCityName\": \"北京\", \"appProvinceName\": \"北京\", \"appSource\": \"app\", \"appCbsImei\": \"\", \"packageName\": \"com.test\", \"appUserId\": \"12345\", \"appPackageName\": \"com.test\" }"
+              - generic [ref=e217]:
+                - generic [ref=e218]: 响应
+                - generic [ref=e219]:
+                  - generic [ref=e221]: STATUS
+                  - generic [ref=e222]:
+                    - generic [ref=e223]: LATENCY
+                    - generic [ref=e224]: 5040ms
