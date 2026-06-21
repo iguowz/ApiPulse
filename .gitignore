@@ -41,6 +41,7 @@ AGENTS.md
 docker-compose.override.yml
 
 # Test
+.playwright-mcp/
 .pytest_cache/
 
 # IDE / Assistant sessions

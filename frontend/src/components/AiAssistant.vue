@@ -303,7 +303,7 @@ async function sendMessage(text) {
                 await ElMessageBox.confirm(
                   data.summary || data.params_preview ? JSON.stringify(data.params_preview, null, 2) : '',
                   t('ai_assistant.confirm_title'),
-                  { confirmButtonText: t('ai_assistant.confirm_execute'), cancelButtonText: t('ai_assistant.confirm_cancel'), type: 'warning' }
+                  { confirmButtonText: t('ai_assistant.confirm_execute'), cancelButtonText: t('ai_assistant.confirm_cancel'), type: 'warning', zIndex: 10000 }
                 )
                 confirmed = true
               } catch (_) {
@@ -435,7 +435,7 @@ async function confirmClearHistory() {
     await ElMessageBox.confirm(
       t('ai_assistant.clear_confirm'),
       t('ai_assistant.clear_title'),
-      { confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel'), type: 'warning' }
+      { confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel'), type: 'warning', zIndex: 10000 }
     )
     await doClearHistory()
   } catch (_) {
@@ -502,7 +502,7 @@ onUnmounted(() => {
 <style scoped>
 /* ── 收起态：右下角浮动按钮 ── */
 .ai-float-btn {
-  position: fixed; bottom: 24px; right: 24px; z-index: 9998;
+  position: fixed; bottom: 24px; right: 24px; z-index: 1998;
   /* 纯圆形浮窗：宽高相等 + border-radius:50% */
   width: 48px; height: 48px;
   display: flex; align-items: center; justify-content: center;
@@ -521,7 +521,7 @@ onUnmounted(() => {
 .ai-float-icon { font-size: 22px; line-height: 1; }
 
 .ai-assistant-overlay {
-  position: fixed; inset: 0; z-index: 9999;
+  position: fixed; inset: 0; z-index: 1999;
   background: rgba(0,0,0,.3);
   display: flex; align-items: flex-start; justify-content: center;
   padding-top: 8vh;
