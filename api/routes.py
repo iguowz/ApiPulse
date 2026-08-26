@@ -346,6 +346,7 @@ from api.routers.audit import router as audit_router
 from api.routers.ai_operation_logs import router as ai_ops_router
 from api.routers.diff_alerts import router as diff_alerts_router
 from api.routers.generations import router as generations_router
+from api.routers.dependencies import router as dependencies_router
 from api.routers.prompts import router as prompts_router  # P1-6: Prompt 版本化管理
 from api.routers.ai_chat import router as ai_chat_router  # P1-3: AI 对话面板
 from api.routers.memory import router as memory_router  # P3: 4-tier 记忆管理
@@ -360,6 +361,7 @@ app.include_router(audit_router)
 app.include_router(ai_ops_router)
 app.include_router(diff_alerts_router)
 app.include_router(generations_router)
+app.include_router(dependencies_router)
 app.include_router(prompts_router)  # P1-6: Prompt 版本化管理
 app.include_router(ai_chat_router)  # P1-3: AI 对话面板
 app.include_router(mock_services_router)
@@ -405,7 +407,9 @@ async def startup():
     proj_count = await db["projects"].estimated_document_count()
     if proj_count == 0:
         from models.project import Project
-        proj = Project(id=str(uuid.uuid4()), name="默认项目", slug="default", description="系统默认项目")
+        # 默认项目 id 固定为 "default"，与浏览器的 project_id 兜底/默认项目选择保持一致，
+        # 否则会与用户 project_id="default" 分裂，导致数据落错项目、审核中心查不到。
+        proj = Project(id="default", name="默认项目", slug="default", description="系统默认项目")
         await db["projects"].insert_one(proj.model_dump())
         logger.info("已创建默认项目: 默认项目 / default")
 

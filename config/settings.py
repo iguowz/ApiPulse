@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # 前端打字机效果展示生成进度。设为 False 兼容不支持流式的本地模型（如部分 Ollama 版本）。
     llm_stream_enabled: bool = True
 
+    # P0: 本地推理型模型（如 Qwen3.8-9B-GGUF 经 unsloth/llama.cpp 服务）默认把输出放 reasoning_content，
+    # content 为空。置 True 时在请求体里带 chat_template_kwargs.enable_thinking=false 关闭推理，
+    # 让结构化 JSON 直接落到 content，供 parse_structured_output 读取。默认 False（不破坏其它模型）。
+    llm_disable_thinking: bool = False
+
     # CORS：逗号分隔，生产环境应配置具体域名
     # 示例：CORS_ORIGINS=https://aqp.example.com,https://admin.example.com
     cors_origins: str = "*"
@@ -58,6 +63,30 @@ class Settings(BaseSettings):
     jwt_secret: str = "apipulse-jwt-secret-change-in-production"
     # SQL 数据源密码加密密钥；生产环境必须配置强随机值，未配置时回退 jwt_secret。
     sql_secret_key: str = ""
+
+    # ── P0 质量门 / 分级代审 配置（Q1-Q4 改造） ──────────────────
+    # 依赖发现
+    dependency_enabled: bool = True          # 是否启用数据驱动依赖发现
+    dependency_min_confidence: float = 0.6   # 依赖边进入图的置信度阈值
+    dependency_batch_size: int = 50          # 静态挖掘单批 API 数
+    dependency_dynamic_probe: bool = True    # 用真实响应样本校验候选边字段路径(近似动态证据)
+    # 质量门
+    quality_gate_enabled: bool = True
+    quality_gate_self_check: bool = True     # Gate1 语义自检
+    quality_gate_vote: bool = False          # Gate2 多模型一致性（省成本默认关）
+    quality_gate_vote_models: int = 2        # Gate2 参与模型数
+    # 试跑
+    trial_run_enabled: bool = True           # Gate3 试跑自我验证
+    trial_allow_write: bool = False          # 是否允许试跑写操作 API（默认只读）
+    trial_timeout_s: int = 60                # 单场景试跑超时
+    # 分级代审
+    auto_review_enabled: bool = False        # 总开关，灰度
+    auto_review_min_confidence: float = 0.7  # 自动通过最低置信度
+    auto_review_trial_required: bool = True  # 自动通过是否要求试跑通过
+    auto_review_reject_threshold: float = 0.3  # 自动拒绝（坏产物）置信度上限
+    # 规模化分片
+    cluster_batch_max_apis: int = 30         # 单次场景生成最多 API 数（分片）
+    cluster_max_workers: int = 2             # 集群 worker 并发上限
 
     @property
     def cors_origins_list(self) -> list[str]:

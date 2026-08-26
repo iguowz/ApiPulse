@@ -713,24 +713,63 @@ def run_asserts(
         op, exp = rule.operator, rule.expected
         passed = False
         error = ""
+        type_map = {
+            "int": int, "float": float, "str": str, "bool": bool,
+            "list": list, "dict": dict, "null": type(None),
+            "array": list, "object": dict, "string": str,
+            "number": (int, float), "integer": int, "boolean": bool,
+        }
+        expected_type = str(exp).lower()
         try:
             # 委托给 _eval_single_assert 处理共享运算符，确保 API 断言与步骤断言使用同一套比较逻辑
             # （包含数值类型强制转换 int/str，避免 expected 来自前端表单字符串时比较失败）
-            if op in ("eq", "ne", "gt", "gte", "lt", "lte",
-                       "contains", "not_contains", "starts_with", "ends_with",
-                       "regex", "exists", "not_exists", "empty", "not_empty",
-                       "in", "not_in", "length", "type_match", "response_time_lt"):
+            if op == "eq":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "ne":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "gt":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "gte":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "lt":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "lte":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "contains":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "not_contains":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "starts_with":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "ends_with":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "regex":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "exists":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "not_exists":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "empty":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "not_empty":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "in":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "not_in":
+                passed = _eval_single_assert(op, actual, exp)
+            elif op == "length":
                 passed = _eval_single_assert(op, actual, exp)
                 # _eval_single_assert 静默返回 False 而非报错，此处保持与旧逻辑一致通过 error 字段区分原因
-                if not passed and op == "length" and not isinstance(actual, (list, str, dict)):
+                if not passed and not isinstance(actual, (list, str, dict)):
                     error = f"length operator requires list/str/dict, got {type(actual).__name__}"
                     failures.append(f"{rule.field}: {error}")
-                elif not passed and op == "type_match" and str(exp).lower() not in {
-                    "int", "float", "str", "bool", "list", "dict", "null",
-                    "array", "object", "string", "number", "integer", "boolean",
-                }:
+            elif op == "type_match":
+                passed = _eval_single_assert(op, actual, exp)
+                if not passed and expected_type not in type_map:
                     error = f"unknown type '{exp}'"
                     failures.append(f"{rule.field}: {error}")
+            elif op == "response_time_lt":
+                passed = _eval_single_assert(op, actual, exp)
             elif op == "json_schema":
                 # JSON Schema 校验：exp 为 JSON Schema dict，对响应体（body）做校验
                 # 使用 jsonschema 库进行校验，若未安装则跳过并标记失败

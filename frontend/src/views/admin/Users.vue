@@ -18,14 +18,14 @@
       <el-table-column prop="email" label="Email" min-width="180">
         <template #default="{ row }">{{ row.email || '-' }}</template>
       </el-table-column>
-      <el-table-column :label="$t('auth.role')" width="120" align="center">
+      <el-table-column :label="$t('auth.role')" width="150" align="center">
         <template #default="{ row }">
-          <el-tag :type="row.role === 'admin' ? 'danger' : 'info'" size="small" effect="dark">
-            {{ row.role === 'admin' ? $t('auth.role_admin') : $t('auth.role_user') }}
+          <el-tag :type="roleTagType(row.role)" size="small" effect="dark">
+            {{ $t(roleLabelKey(row.role)) }}
           </el-tag>
         </template>
       </el-table-column>
-      <!-- 用户所属项目列：admin 可查看并修改非管理员用户的可见项目 -->
+      <!-- 用户所属项目列：管理员可查看并修改用户的可见项目 -->
       <el-table-column :label="$t('common.project')" width="100" align="center">
         <template #default="{ row }">
           <span class="text-2" style="font-size:12px">{{ projectStore.getName(row.project_id) || row.project_id || '-' }}</span>
@@ -76,11 +76,15 @@
         </el-form-item>
         <el-form-item :label="$t('auth.role')">
           <el-select v-model="editRole" style="width:100%">
-            <el-option value="admin" :label="$t('auth.role_admin')" />
-            <el-option value="user" :label="$t('auth.role_user')" />
+            <el-option
+              v-for="role in ROLE_OPTIONS"
+              :key="role.value"
+              :value="role.value"
+              :label="$t(role.labelKey)"
+            />
           </el-select>
         </el-form-item>
-        <!-- 管理员可为非管理员用户设置可访问的项目，实现项目级数据隔离 -->
+        <!-- 管理员可为用户设置可访问的项目，实现项目级数据隔离 -->
         <el-form-item :label="$t('common.project')">
           <el-select v-model="editProjectId" style="width:100%">
             <el-option v-for="p in projectStore.projects" :key="p.id" :value="p.id" :label="p.name" />
@@ -103,6 +107,7 @@ import { useI18n } from 'vue-i18n'
 import { Refresh } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectStore, useToastStore } from '@/stores'
+import { ROLE_OPTIONS, normalizeRole, roleLabelKey, roleTagType } from '@/utils/rbac'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
@@ -132,7 +137,7 @@ async function loadUsers() {
 
 function openEdit(user) {
   editUser.value = user
-  editRole.value = user.role
+  editRole.value = normalizeRole(user.role)
   // 加载用户当前所属项目，供管理员修改
   editProjectId.value = user.project_id || ''
   editVisible.value = true

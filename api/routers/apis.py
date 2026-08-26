@@ -233,6 +233,7 @@ async def create_api(
     current_user: dict = Depends(get_current_user),
     service: ApiService = Depends(get_api_service),
     audit_service: AuditService = Depends(get_audit_service),
+    db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
     手动新建接口定义。请求体支持：
@@ -307,6 +308,14 @@ async def create_api(
 
     # 差异检测：手动创建 API 后对比已分析的同路径 API，覆盖所有接口修改方式
     await _detect_diff_for_api(db, created["id"], project_id)
+
+    # P0 依赖发现：新增 API 后增量更新依赖图（fire-and-forget，不阻塞创建；供审核中心/生成提前使用）
+    try:
+        import asyncio
+        from services.dependency_service import DependencyService
+        asyncio.create_task(DependencyService(db).update_edges_for_api(created["id"]))
+    except Exception:
+        pass
 
     return created
 

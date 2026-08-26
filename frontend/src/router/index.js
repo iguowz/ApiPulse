@@ -1,4 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { hasPermission, normalizeUser } from '@/utils/rbac'
+import { isTokenExpired } from '@/stores/auth'
 
 const routes = [
   { path: '/',              redirect: '/dashboard' },
@@ -15,6 +17,7 @@ const routes = [
   { path: '/import-diffs',  name: 'ImportDiffs',   component: () => import('@/views/import-diffs/Index.vue') },
   { path: '/factory',       name: 'Factory',      component: () => import('@/views/factory/Index.vue') },
   { path: '/generations',   name: 'Generations',   component: () => import('@/views/generations/Index.vue') },
+
   { path: '/coverage',      name: 'Coverage',      component: () => import('@/views/coverage/Index.vue') },
   { path: '/knowledge',     name: 'Knowledge',     component: () => import('@/views/knowledge/Index.vue') },
   // 记忆页面已迁移至知识库 Tab（/knowledge?tab=memory 或直接切换标签页）
@@ -26,7 +29,7 @@ const routes = [
 
   { path: '/monitor',       name: 'Monitor',      component: () => import('@/views/monitor/Index.vue') },
   // P2-7: 告警渠道管理已迁移至设置页面 (?tab=alert-channels)
-  { path: '/admin/users',   name: 'AdminUsers',   component: () => import('@/views/admin/Users.vue'), meta: { admin: true } },
+  { path: '/admin/users',   name: 'AdminUsers',   component: () => import('@/views/admin/Users.vue'), meta: { permission: 'user:manage' } },
   { path: '/settings',      name: 'Settings',     component: () => import('@/views/settings/Index.vue') },
   { path: '/:pathMatch(.*)*', name: 'NotFound',    component: () => import('@/views/NotFound.vue') },
 ]
@@ -37,7 +40,7 @@ const router = createRouter({
 })
 
 // 路由守卫：未登录用户重定向到 /login（guest 页面无需登录）
-// admin 路由额外要求管理员角色，非管理员重定向到 dashboard
+// 带 permission 的路由需要当前角色拥有对应 RBAC 权限
 router.beforeEach((to, _from, next) => {
   // 检查本地 token 是否存在（简化的认证判断，不含过期校验）
   const token = localStorage.getItem('aqp_token')
@@ -49,20 +52,22 @@ router.beforeEach((to, _from, next) => {
   }
 
   // 非 guest 页面：未登录时跳转 /login
-  if (!token) {
+  if (!token || isTokenExpired(token)) {
+    // 无 token 或已过期 → 清除本地凭证并跳登录
+    if (token) { localStorage.removeItem('aqp_token'); localStorage.removeItem('aqp_user') }
     return next({ path: '/login', query: { redirect: to.fullPath } })
   }
 
-  // admin 路由守卫：检查用户角色是否为 admin，非管理员重定向到 dashboard
-  if (to.meta.admin) {
+  const requiredPermission = to.meta.permission
+  if (requiredPermission) {
     try {
       const raw = localStorage.getItem('aqp_user')
-      const user = raw ? JSON.parse(raw) : null
-      if (!user || user.role !== 'admin') {
+      const user = normalizeUser(raw ? JSON.parse(raw) : null)
+      if (!user || !hasPermission(user.role, requiredPermission)) {
         return next('/dashboard')
       }
     } catch {
-      // aqp_user 解析失败（数据损坏或格式异常）时安全降级，拒绝访问 admin 页面
+      // aqp_user 解析失败（数据损坏或格式异常）时安全降级，拒绝访问受限页面
       return next('/dashboard')
     }
   }

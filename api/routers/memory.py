@@ -145,3 +145,23 @@ async def search_memory(
     memory = _get_memory()
     results = await memory.retrieve(project_id, query, limit=limit)
     return results
+
+
+@router.get("/memory/cleanup-candidates")
+async def memory_cleanup_candidates(
+    project_id: str | None = Query(default=None),
+    stale_days: int = Query(default=90, ge=1, le=3650),
+    low_confidence: float = Query(default=0.2, ge=0.0, le=1.0),
+    limit: int = Query(default=100, ge=1, le=500),
+    request: Request = None,
+    user: dict = Depends(get_current_user),
+):
+    """列出低置信、长期未用、重复、孤儿 API 引用等记忆清理候选。"""
+    ensure_project_access(user, project_id)
+    memory = _get_memory()
+    return await memory.cleanup_candidates(
+        project_id,
+        stale_days=stale_days,
+        low_confidence=low_confidence,
+        limit=limit,
+    )

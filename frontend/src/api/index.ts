@@ -220,7 +220,7 @@ export const trafficApi = {
 export const executionApi = {
   list:      (params?: Params): Promise<any> => http.get('/executions', { params }),
   get:       (id: ID): Promise<any>          => http.get(`/executions/${id}`),
-  exportCsv: (params?: Params): Promise<AxiosResponse> => http.get('/executions/export/csv', { params, responseType: 'blob' }),
+  exportCsv: (params?: Params): Promise<Blob> => http.get('/executions/export/csv', { params, responseType: 'blob' }),
   getReport: (id: ID): Promise<AxiosResponse>         => http.get(`/executions/${id}/report`, { responseType: 'blob' }),
 }
 
@@ -279,6 +279,7 @@ export const memoryApi = {
   listL3:   (params?: Params): Promise<any>  => http.get('/memory/l3', { params }),
   deleteL3: (sessionId: string): Promise<any> => http.delete(`/memory/l3/${sessionId}`),
   search:   (params?: Params): Promise<any>  => http.post('/memory/search', null, { params }),
+  cleanupCandidates: (params?: Params): Promise<any> => http.get('/memory/cleanup-candidates', { params }),
 }
 
 // ── Knowledge (ReMe 记忆系统) ──────────────────────────────
@@ -312,6 +313,10 @@ http.interceptors.response.use(
     if (e.response?.status === 401) {
       localStorage.removeItem('aqp_token')
       localStorage.removeItem('aqp_user')
+      // token 过期/无效：跳转登录页，避免停留当前页只报 401
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login'
+      }
     }
     const msg = e.response?.data?.detail || e.message || 'Network error'
     logger.error('API error:', e.response?.status, e.response?.config?.url, msg)
@@ -353,6 +358,9 @@ export const generationApi = {
   acceptPartial:(id: ID, fields: string[]): Promise<any>  => http.post(`/generations/${id}/accept-partial`, fields),
   reject:       (id: ID, feedback?: string): Promise<any> => http.post(`/generations/${id}/reject`, feedback || ''),
   edit:         (id: ID, content: Body): Promise<any>     => http.post(`/generations/${id}/edit`, content),
+  batch:        (ids: ID[], action: string, feedback?: string): Promise<any> => http.post('/generations/batch', { ids, action, feedback: feedback || '' }),
+  // P0-D5 渐进信任看板：自动通过/试跑/置信度健康度
+  autoReviewStats: (projectId?: string): Promise<any> => http.get('/generations/auto-review-stats', { params: { project_id: projectId || undefined } }),
 }
 
 // ── Audit ────────────────────────────────────────────────────

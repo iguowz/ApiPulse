@@ -76,6 +76,52 @@ async def get_execution(
         {"_id": 0},
     ).sort("created_at", -1).limit(10).to_list(10)
     doc["diagnosis_links"] = links
+    project_id = doc.get("project_id", "default")
+    api_id = doc.get("api_id", "")
+    try:
+        doc["pending_repair_generations"] = await db["generation_versions"].find(
+            {
+                "project_id": project_id,
+                "status": "pending_review",
+                "$or": [
+                    {"job_id": f"diagnose:{execution_id}"},
+                    {"content.repair.execution_id": execution_id},
+                ],
+            },
+            {"_id": 1, "api_id": 1, "type": 1, "summary": 1, "job_id": 1, "created_at": 1},
+        ).sort("created_at", -1).limit(10).to_list(10)
+        for item in doc["pending_repair_generations"]:
+            if "_id" in item:
+                item["id"] = str(item.pop("_id"))
+    except Exception:
+        doc["pending_repair_generations"] = []
+    try:
+        diff_or = []
+        if api_id:
+            diff_or = [{"existing_api_id": api_id}, {"new_api_id": api_id}]
+        doc["related_import_diffs"] = await db["import_diffs"].find(
+            {"project_id": project_id, **({"$or": diff_or} if diff_or else {})},
+            {"_id": 0, "id": 1, "status": 1, "api_path": 1, "method": 1, "fields_diff": 1, "created_at": 1},
+        ).sort("created_at", -1).limit(5).to_list(5)
+    except Exception:
+        doc["related_import_diffs"] = []
+    try:
+        similar_or = []
+        if api_id:
+            similar_or.extend([{"api_id": api_id}, {"steps.api_id": api_id}])
+        if doc.get("scenario_id"):
+            similar_or.append({"scenario_id": doc.get("scenario_id")})
+        doc["similar_failures"] = await db["executions"].find(
+            {
+                "project_id": project_id,
+                "passed": False,
+                "id": {"$ne": execution_id},
+                **({"$or": similar_or} if similar_or else {}),
+            },
+            {"_id": 0, "id": 1, "api_id": 1, "scenario_id": 1, "failure_reason": 1, "started_at": 1, "diagnosis_status": 1, "diagnosis.root_cause": 1},
+        ).sort("started_at", -1).limit(5).to_list(5)
+    except Exception:
+        doc["similar_failures"] = []
     return doc
 
 

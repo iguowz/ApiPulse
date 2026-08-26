@@ -241,6 +241,15 @@
     "ai_metric_tokens_each": "单次平均 tokens",
     "ai_metric_total_tokens": "总 Token 用量",
     "ai_metric_tokens_label": "Token 用量",
+    "ai_metric_auto_applied": "自动通过",
+    "desc_ai_auto_applied": "低风险 + 高置信度 + 试跑通过后由系统自动采纳的生成数",
+    "ai_kpi_auto_applied_sub": "自动采纳 {count} 项",
+    "ai_metric_trial_pass": "试跑通过",
+    "desc_ai_trial_pass": "场景试跑自证（通过数 / 已试跑数）",
+    "ai_kpi_trial_sub": "试跑通过率 {rate}",
+    "ai_metric_high_conf": "置信度达标",
+    "desc_ai_high_conf": "置信度 >= 阈值(0.7) 的生成数",
+    "ai_kpi_high_conf_sub": "阈值 {threshold}",
     "ai_metric_tokens_input": "入",
     "ai_metric_tokens_output": "出",
     "ai_node_doc": "接口文档",
@@ -1179,10 +1188,13 @@
     "route_count": "{count} 条路由",
     "error_count": "{count} 个错误",
     "public_enabled": "公开访问",
-    "public_without_key": "公开缺少 Key",
+    "public_with_key": "公开需 Key",
+    "public_without_key": "公开免 Key",
     "copy_url": "复制地址",
     "slug": "服务标识",
     "access_key": "访问 Key",
+    "access_key_enabled": "启用访问 Key",
+    "access_key_disabled": "未启用 Key",
     "access_key_placeholder": "访问 Key",
     "access_key_required": "公开访问必须配置访问 Key",
     "generate_key": "生成 Key",
@@ -1706,13 +1718,17 @@
     "tabL2": "L2 项目记忆",
     "tabL3": "L3 会话记忆",
     "tabSearch": "聚合检索",
+    "tabCleanup": "待清理",
     "emptyL1": "暂无 L1 长期记忆",
     "emptyL2": "暂无 L2 项目记忆",
     "emptyL3": "暂无 L3 会话记忆（仅展示 30 天内有效条目）",
+    "emptyCleanup": "暂无待清理记忆",
     "confirmDeleteL1": "确认删除该 L1 记忆？",
     "confirmDeleteL2": "确认删除该 L2 记忆？",
     "confirmDeleteL3": "确认删除该 L3 会话记忆？",
+    "confirmDeleteCleanup": "确认删除该候选记忆？",
     "delete": "删除",
+    "refreshCleanup": "刷新",
     "noResults": "未找到相关记忆",
     "searchHint": "输入关键词后点击\"检索\"进行跨层记忆搜索",
     "colKey": "Key",
@@ -1725,11 +1741,18 @@
     "colAction": "操作",
     "colTitle": "标题",
     "colType": "类型",
+    "colLayer": "层级",
+    "colReason": "原因",
+    "colScore": "分数",
     "colSessionId": "会话 ID",
     "colSummary": "摘要",
     "colUser": "用户",
     "colExpiresAt": "过期时间",
     "totalItems": "{n} 条",
+    "cleanup_low_confidence": "低置信",
+    "cleanup_stale_unused": "长期未命中",
+    "cleanup_duplicate_title": "重复标题",
+    "cleanup_orphan_api_reference": "失效 API 关联",
     "deleteFailed": "删除失败",
     "loadFailed": "加载失败",
     "resultGroupL1": "L1 长期记忆 ({n})",
@@ -1768,7 +1791,9 @@
     "confirmPassword": "确认密码",
     "role": "角色",
     "role_admin": "管理员",
-    "role_user": "普通用户",
+    "role_editor": "编辑者",
+    "role_viewer": "只读用户",
+    "role_monitor_admin": "巡检管理员",
     "createdAt": "注册时间",
     "admin_users": "用户管理",
     "admin_users_desc": "管理所有已注册用户",
@@ -1999,6 +2024,11 @@
     "confirm_cancel": "取消",
     "write_success": "操作完成",
     "write_failed": "操作失败",
+    "proposal_pending": "待确认",
+    "proposal_running": "执行中",
+    "proposal_executed": "已执行",
+    "proposal_cancelled": "已取消",
+    "proposal_failed": "失败",
     "retrying": "连接失败，正在重试 ({attempt}/{max})…",
     "error_max_retries": "多次重试后连接仍失败，请检查网络后重试"
   },
@@ -2036,10 +2066,11 @@
     "toc": "目录导航",
     "sections": {
       "intro": "1. 项目介绍",
-      "modules": "2. 功能模块说明",
-      "scenarios": "3. 常用场景与操作流程",
-      "notes": "4. 其他说明",
-      "examples": "5. 使用示例"
+      "architecture": "2. 系统架构与核心流程",
+      "modules": "3. 功能模块说明",
+      "scenarios": "4. 常用场景与操作流程",
+      "notes": "5. 其他说明",
+      "examples": "6. 使用示例"
     },
     "intro": {
       "p1": "ApiPulse 是一站式 API 质量保障平台，覆盖接口资产管理、AI 智能分析、测试场景编排、Mock 服务、数据工厂、巡检监控等核心能力，帮助团队构建高效、可靠的 API 测试体系。",
@@ -2053,26 +2084,39 @@
       ],
       "p2": "平台以项目为维度进行数据隔离，支持多语言（中/英）、暗色/亮色主题切换、AI 快捷键（Cmd/Ctrl+K）等便捷功能。"
     },
+    "architecture": {
+      "p1": "以真实 HTTP 流量为唯一事实来源，构建「捕获 → 分析 → 测试 → 监控」闭环；下图用 Archify 可交互图描述系统架构与核心流程。",
+      "open": "打开交互式图",
+      "diagrams": [
+        { "file": "architecture", "title": "系统架构", "desc": "前端 Vue 3 SPA → FastAPI 网关（中间件 + 30 路由）→ 业务服务与引擎（HAR 解析 / AI 分析 / DAG 执行 / 巡检调度 / 四层记忆）→ MongoDB / Redis / MinIO，接驳 LLM 与多渠道告警。" },
+        { "file": "workflow", "title": "端到端主流程", "desc": "导入 HAR / 抓包 → 流式解析去重入库 → 推送队列 → AI 生成文档 / 断言 / 场景 / 巡检建议 → 审核 → DAG 场景执行 → 定时巡检（DeepDiff 比对）→ 多渠道告警 → 四层记忆沉淀。" },
+        { "file": "sequence", "title": "时序：HAR 导入至 AI 分析生成", "desc": "上传 HAR → /api/har/upload → HarParserService 流式解析 → 写 MongoDB 并推送 Redis 队列 → AI Worker 调用 LLM 生成产物 → 写生成版本库 → WebSocket 推送前端。" },
+        { "file": "dataflow", "title": "数据流：捕获 → 分析 → 巡检 → 告警", "desc": "HAR / 抓包 → 解析去重 → MongoDB DSL → Redis 队列 → AI 产物（生成版本库）→ DAG 执行记录 → 定时巡检 → 告警渠道；四层记忆在生成阶段持续沉淀。" }
+      ]
+    },
     "modules": {
       "dashboard": {
         "title": "仪表盘",
-        "desc": "平台全局状态概览页面，提供 KPI 关键指标、执行趋势图和测试覆盖率热力图。",
-        "tabs": ["概览：核心业务 KPI 卡片（API 总数、场景数、执行次数、告警数）", "工作台：个人工作台，快捷访问常用功能"],
+        "desc": "平台全局状态概览页面，提供项目级 KPI、AI 任务质量、执行趋势、覆盖缺口和最近操作入口。",
+        "tabs": ["概览：核心业务 KPI 卡片（API 总数、场景数、执行通过率、告警数、SLA 可用性）", "工作台：聚合待分析 API、低质量资产、待审核 AI 产出和快捷操作"],
         "features": [
           "项目过滤：按项目筛选仪表盘数据，切换项目后所有指标实时更新",
           "覆盖率热力图：按模块 × 维度（场景/Mock/数据工厂/巡检）展示各资产的覆盖矩阵",
-          "执行趋势：折线图展示最近的执行成功/失败趋势"
+          "执行趋势：折线图展示最近执行通过率、失败量和响应耗时变化",
+          "AI 质量统计：展示 AI 生成内容、待审核数量、任务成功率和队列状态，辅助排查 AI 任务积压",
+          "最近操作审计：展示关键变更行为，便于追踪谁在什么时候改动了 API、场景、Mock 或设置"
         ]
       },
       "apis": {
         "title": "API 接口",
         "desc": "API 资产集中管理页面，支持搜索、筛选、批量操作和多种格式导入。",
         "features": [
-          "多种导入方式：Swagger/OpenAPI、Postman、HAR、mitmproxy 实时抓包、cURL 粘贴",
-          "批量操作：批量删除、批量导出、批量 AI 分析",
+          "多种导入方式：Swagger/OpenAPI、Postman、HAR、mitmproxy 实时抓包、cURL 粘贴和手动创建",
+          "批量操作：批量删除、批量导出 OpenAPI JSON、批量触发 AI 分析/生成",
           "列表视图：显示 API 方法、路径、标签、项目、质量评分、最后更新时间",
           "筛选搜索：按方法、路径、标签、项目搜索过滤",
-          "单接口快速创建：手动填写请求信息新建 API"
+          "差异入口：重新导入已存在接口时进入差异比对，避免重复创建并保留变更记录",
+          "项目域名过滤：按项目白名单/黑名单控制 HAR 与抓包流量收录范围"
         ]
       },
       "apidetail": {
@@ -2081,12 +2125,12 @@
         "features": [
           "请求/响应查看：结构化展示 Headers、Query、Body（支持 JSON/XML/表单）",
           "AI 智能分析：自动分析 API 结构并生成质量评分和改进建议",
-          "文档生成：基于 AI 自动生成 API 使用文档",
-          "断言生成：自动生成多种类型的测试断言（状态码、响应体、响应头等）",
+          "文档生成：基于 AI 自动生成摘要、描述、参数表、响应字段和标签，支持人工编辑后保存",
+          "断言生成：自动生成状态码、JSONPath、Header、响应时间、类型匹配、正则等断言",
           "场景生成：从当前 API 自动生成包含多步骤的测试场景",
           "直接发送请求：内置请求发送器，实时查看响应结果",
           "接口地址与参数自动替换为所选执行环境对应的值",
-          "鉴权配置：支持 None / Bearer Token / Basic Auth / API Key / OAuth 2.0 等鉴权方式，可绑定全局环境变量",
+          "鉴权配置：支持 None / Bearer Token / Basic Auth / API Key，可绑定全局环境变量",
           "断言编辑：提供可视化断言编辑器，支持状态码断言、响应体 JSONPath 断言、响应头断言、响应时间断言等；每个断言包含「操作符」（等于/包含/正则/大于/小于…）和「期望值」；支持 AI 一键推荐断言",
           "参数引用：通过 {{step_N.response.body.path}} 语法引用上游步骤提取的变量；支持引用数据工厂模板字段 {{factory.field}} 和环境变量 {{env.BASE_URL}}",
           "数据库查询引用：场景步骤中可配置 SQL 查询步骤，查询结果通过 {{sql_step_N.rows[0].column}} 语法被后续步骤引用",
@@ -2098,11 +2142,14 @@
         "title": "Mock 服务",
         "desc": "独立 Mock 服务管理，模拟第三方或内部依赖服务的响应行为。",
         "features": [
-          "路由规则：支持路径前缀/精确匹配、HTTP 方法筛选",
-          "响应配置：自定义状态码、响应头、响应体（支持模板变量）",
-          "调用日志：记录每次 Mock 调用的请求信息、匹配规则和响应内容",
+          "路由规则：支持路径精确匹配、通配后缀、路径参数、HTTP 方法和优先级",
+          "条件分支：同一路由可配置多个响应分支，按 query/header/cookie/body/jsonpath/method/host 等条件和优先级命中",
+          "响应配置：自定义状态码、响应头、响应体，支持 static、template、mock_data 三种来源",
+          "模板变量：响应模板可引用 {{query.id}}、{{headers.authorization}}、{{body.user.id}}、{{sql.user.first.name}}、{{mock.id}}、{{timestamp}} 等上下文",
+          "SQL 联动：响应分支可执行只读 SQL 片段并把查询结果注入模板，适合模拟有状态依赖",
+          "调用日志：记录每次 Mock 调用的请求摘要、命中路由/分支、SQL 引用、最终响应和耗时，敏感字段自动脱敏",
           "延迟模拟：可配置响应延迟时间，模拟网络波动",
-          "多环境：每个 Mock 服务独立 URL，支持多个版本并行运行"
+          "访问控制：服务可设置公开访问、访问 Key、默认响应和独立 slug；支持流量来源、代理规则与回放生成路由草稿"
         ]
       },
       "scenarios": {
@@ -2111,10 +2158,11 @@
         "features": [
           "场景列表：显示场景名称、项目、标签、步骤数、最后执行状态",
           "DAG 可视化编排：拖拽式步骤编排，可视化展示步骤间的参数传递和依赖关系",
-          "步骤编辑：支持 API 调用、Mock 请求、数据工厂引用、断言设置等多类型步骤",
+          "步骤编辑：支持 API 调用、Mock 请求、等待、条件分支、循环、数据工厂引用、断言、提取变量、SQL 前后置查询和脚本",
           "批量执行：支持场景内步骤并行/串行执行策略",
           "执行跟踪：实时查看执行进度、步骤级输入输出和断言结果",
-          "数据引用：步骤间通过变量引用传递响应数据或数据工厂生成的数据"
+          "数据引用：步骤间通过变量引用传递响应数据、环境变量、数据工厂生成数据和 SQL 查询结果",
+          "AI 生成：支持 single/multi/complex 策略，从一个或多个 API 自动生成候选场景并进入审核中心"
         ]
       },
       "factory": {
@@ -2123,9 +2171,11 @@
         "features": [
           "数据模板：定义数据结构，每个字段可绑定生成规则",
           "字段编辑器：可视化编辑字段名、类型、生成规则",
-          "Faker 方法：内置 50+ Faker 方法（姓名、地址、邮箱、手机号、日期等）",
-          "数据集管理：批量预览、导出、导入生成的数据",
-          "模板引用：场景步骤中可直接引用数据模板，运行时动态生成数据"
+          "Faker 方法：内置 80+ Faker 生成器（姓名、地址、邮箱、手机号、日期、UUID 等），支持中英文数据",
+          "异常数据：字段可配置 null_rate、empty_rate、invalid_rate，用于边界值和负向测试",
+          "数据集管理：批量预览、生成、导出、导入生成的数据",
+          "模板引用：场景步骤中可直接引用项目通用模板或 API 专属模板，运行时动态生成数据",
+          "AI 增强：可基于 API 文档/响应字段生成数据模板，产出进入审核中心后再采纳"
         ]
       },
       "executions": {
@@ -2144,20 +2194,24 @@
         "desc": "定时巡检监控，自动轮询接口健康状态并在异常时多渠道告警。",
         "features": [
           "巡检任务：定义巡检对象（场景/API）、执行频率（cron 表达式）、超时时间",
-          "定时执行：基于 cron 自动触发执行，支持手动立即执行",
+          "定时执行：支持 cron 与 interval 调度，支持手动立即执行",
           "告警管理：查看告警记录、告警详情、恢复时间",
           "多渠道通知：钉钉机器人、企业微信、Slack Webhook、自定义 Webhook",
-          "健康趋势：按时间段展示接口可用率、响应时间趋势图"
+          "健康趋势：按时间段展示接口可用率、响应时间趋势图",
+          "AI 生成巡检：可按覆盖缺口、风险偏好和调度偏好生成待审核巡检建议",
+          "数据库与 SQL 支持：巡检目标可使用数据库服务/SQL 片段为步骤提供前置数据或校验依据"
         ]
       },
       "generations": {
         "title": "审核中心",
         "desc": "AI 生成内容的审核管理中心，集中审核采纳或放弃 AI 产出的内容。",
         "features": [
-          "生成列表：按类型（文档/断言/场景/评估）查看所有 AI 产出物",
+          "生成列表：按类型（文档/断言/场景/数据模板/巡检/聊天建议）查看所有 AI 产出物",
           "审核操作：采纳（替换现有内容）、部分采纳（仅合并选中项）、放弃",
           "批量审核：支持批量通过或批量拒绝 AI 生成结果",
-          "差异对比：采纳前可预览新旧内容的差异对比"
+          "差异对比：采纳前可预览新旧内容的字段级差异对比",
+          "版本追踪：记录 reviewer、审核状态、采纳时间和生成内容，便于回溯 AI 产出历史",
+          "记忆沉淀：审核结果可写入项目记忆，为后续文档、断言和场景生成提供反馈"
         ]
       },
       "importdiffs": {
@@ -2180,7 +2234,8 @@
           "L3 会话记忆（MongoDB，30天TTL）：AI 对话结束时自动归档，ReMe LLM 生成结构化摘要，同一会话自动更新不重复",
           "L4 对话上下文（Redis，24h TTL）：AI Chat 多轮对话实时上下文，SSE 流式推送",
           "语义检索（ReMe）：跨层向量搜索，根据查询语义匹配 L1/L2/L3 中最相关的记忆条目",
-          "AI 自动归档：对话结束后通过 SSE 完成事件触发，优先调用 ReMe LLM 生成摘要，LLM 不可用时回退为首条用户消息截断"
+          "AI 自动归档：对话结束后通过 SSE 完成事件触发，优先调用 ReMe LLM 生成摘要，LLM 不可用时回退为首条用户消息截断",
+          "知识类型：支持字段模式、断言模式、文档模式、场景模式等可复用约定，供 AI 助手和分析任务检索"
         ]
       },
       "coverage": {
@@ -2197,12 +2252,13 @@
         "title": "设置",
         "desc": "平台全局配置页面，包含多个功能标签页。",
         "features": [
-          "LLM 配置：配置 AI 模型提供商、API Key、模型名称和参数",
-          "AI 任务：管理 AI 相关的后台异步任务（分析、生成、诊断等）",
-          "提示词管理：自定义 AI Prompt 模板，按任务类型分别配置",
+          "LLM 配置：配置 OpenAI / DeepSeek / Ollama / LM Studio / 自定义 OpenAI 兼容服务，支持按任务配置模型路由",
+          "AI 任务：管理 AI 相关的后台异步任务（分析、文档、断言、场景、数据模板、巡检、诊断等）",
+          "提示词管理：自定义 AI Prompt 模板，按 doc/asserts/scenario/data_template/monitor/diff_eval/diagnose/extract/alert 等任务类型分别配置版本",
           "死信队列：查看和管理处理失败的消息/任务",
           "执行环境：管理多套执行环境（开发/测试/预发布/生产），配置 Base URL、变量等",
-          "通用设置：平台全局偏好设置",
+          "数据库服务：管理 PostgreSQL / MySQL / SQLite 只读数据源和 SQL 片段，供场景、巡检、Mock 使用",
+          "通用设置：平台全局偏好设置，如语言、AI 审核流程、采纳后自动触发下游 AI、导航栏自动收起",
           "项目管理：创建、编辑、删除项目，配置域名黑白名单过滤",
           "告警渠道：管理钉钉/企微/Slack/Webhook 告警通知渠道"
         ]
@@ -2223,9 +2279,11 @@
         "desc": "系统用户管理页面，仅管理员角色可访问。支持用户的创建、编辑、删除和角色分配。",
         "features": [
           "用户列表：显示用户名、邮箱、角色、创建时间、最后登录时间",
-          "角色管理：支持管理员和普通用户两种角色，管理员拥有全部权限",
-          "创建/编辑用户：管理员可创建新用户、编辑已有用户信息（用户名、邮箱、密码、角色）",
-          "删除/禁用：支持删除或禁用用户账号，禁用后用户无法登录"
+          "角色管理：后端 RBAC 支持 admin、editor、viewer、monitor_admin 四类角色；admin 拥有全部权限并可跨项目访问",
+          "项目归属：非管理员用户按 project_id 做数据隔离，只能访问所属项目资源",
+          "创建/编辑用户：管理员可创建新用户、编辑已有用户信息（用户名、密码、角色、显示名、所属项目）",
+          "删除/禁用：支持删除或禁用用户账号，禁用后用户无法登录",
+          "机器调用：兼容全局 X-API-Key 机器调用，按管理员权限处理，适合 CI 或外部系统集成"
         ]
       }
     },
@@ -2237,42 +2295,95 @@
           "title": "从抓包到 API 分析",
           "background": "使用 mitmproxy 抓取客户端网络流量，或从浏览器导出 HAR 文件，快速将外部请求导入为平台 API 资产并利用 AI 进行深度分析。",
           "flow": "mitmproxy 实时抓包 / 浏览器导出 HAR → 粘贴内容到 API 导入 → 系统自动解析并创建 API 资产 → 进入 API 详情页 → 点击 AI 分析 → 获取质量评分与改进建议 → 生成测试断言和 API 文档",
+          "steps": [
+            "在设置 → 项目管理中确认当前项目与域名白名单/黑名单，避免把静态资源或无关域名导入资产库。",
+            "浏览器场景可在 DevTools Network 导出 HAR；移动端或桌面端可使用 mitmproxy 实时抓包，并按页面提示启动插件。",
+            "进入 API 接口页，选择 HAR/mitmproxy/cURL 等导入方式，提交后系统会解析请求、响应、Header、Query、Body 并按签名去重。",
+            "新接口会直接进入 API 列表；已有接口会生成差异记录，先到差异比对页确认是否采纳字段变化。",
+            "打开 API 详情页，触发 AI 分析或等待自动分析完成，检查质量评分、文档、断言和改进建议。",
+            "在审核中心采纳 AI 产出的文档/断言后，再把接口加入场景或巡检。"
+          ],
           "tips": ["mitmproxy 适合实时抓取移动端/Web 端请求，HAR 适合批量导入浏览器流量", "导入时会自动去重，已存在的 API 会进入差异对比而非重复创建"]
         },
         {
           "title": "创建测试场景并执行",
           "background": "将多个 API 按业务流程编排为测试场景，设置参数传递和断言，一键执行验证。",
           "flow": "进入场景页 → 新建场景 → 设置场景名称、标签 → 在 DAG 编排器中添加步骤（API 调用/断言/延迟等）→ 配置步骤间的参数传递 → 保存 → 点击执行 → 查看实时执行进度和步骤级结果",
+          "steps": [
+            "进入场景页新建场景，填写名称、项目、标签和描述，也可以从 API 详情页或场景页选择 AI 生成。",
+            "在 DAG 画布中添加 API 步骤，选择接口后配置 Header、Query、Body、鉴权和执行环境覆盖值。",
+            "在上游步骤中配置提取变量，常见写法是 JSONPath、XPath 或 Regex；在下游步骤用 {{step_1.response.body.data.id}} 引用。",
+            "为关键步骤添加断言，优先覆盖状态码、业务 code、核心字段、数组长度和响应时间。",
+            "需要准备数据时，引用数据工厂模板；需要数据库校验时，配置 pre_sql/post_sql 或 SQL 步骤。",
+            "保存后选择执行环境并运行，执行详情会展示每个步骤的请求、响应、断言结果和 AI 诊断。"
+          ],
           "tips": ["执行前可在底部选择执行环境", "支持拖拽步骤节点调整执行顺序", "步骤间通过 {{step_X.response.body.field}} 语法引用上游数据"]
         },
         {
           "title": "数据工厂造数",
           "background": "当测试场景需要多样化测试数据时，使用数据工厂批量生成符合真实分布的数据集。",
           "flow": "进入数据工厂 → 新建数据模板 → 定义字段（名称/邮箱/手机/日期等）→ 为每个字段选择 Faker 生成方法 → 预览生成效果 → 保存模板 → 在场景步骤中引用模板 → 运行时自动生成数据",
+          "steps": [
+            "进入数据工厂，新建项目通用模板或绑定到某个 API 的专属模板。",
+            "为字段选择固定值、Faker 方法或正则生成规则；必要时配置 null_rate、empty_rate、invalid_rate 覆盖异常值。",
+            "点击生成数据预览，确认字段类型、取值范围、中文/英文数据和异常比例符合预期。",
+            "保存模板后，在场景步骤中通过 {{factory.template_name.field}} 或步骤编辑器的数据模板入口引用。",
+            "执行场景时系统会按模板动态生成数据，避免多个用例共享同一份静态测试数据。"
+          ],
           "tips": ["支持生成批量数据（1-1000 条），可直接导出为 JSON/CSV", "字段支持固定值、Faker 方法、正则表达式三种模式"]
         },
         {
           "title": "巡检监控",
           "background": "为关键 API 或测试场景设置定时巡检任务，自动监控接口健康状态，异常时立即告警。",
           "flow": "确认目标 API/场景已就绪 → 进入巡检监控页 → 新建巡检任务 → 选择监控对象（场景/API）→ 设置 cron 执行频率 → 配置告警渠道 → 启用任务 → 系统定时执行 → 异常时自动发送告警通知",
+          "steps": [
+            "先确认目标 API 或场景可以在选定执行环境中成功运行，并补齐关键断言。",
+            "在设置 → 告警渠道中配置钉钉、企业微信、Slack 或自定义 Webhook。",
+            "进入巡检监控页新建任务，选择 API/场景/数据工厂等目标，设置 cron 或 interval 调度、超时和告警策略。",
+            "也可以打开 AI 生成巡检，根据覆盖缺口、风险偏好和调度偏好生成候选任务，再到审核中心采纳。",
+            "启用后系统定时执行，失败时写入执行历史和告警记录，并推送到配置的渠道。",
+            "收到告警后进入执行详情查看失败步骤、断言差异和 AI 诊断建议，修复后观察恢复状态。"
+          ],
           "tips": ["cron 表达式支持五字段格式（分 时 日 月 周）", "告警渠道需先在设置中配置", "可通过 WebSocket 接收实时告警推送"]
         },
         {
           "title": "AI 辅助全流程",
           "background": "从 API 导入到场景执行全流程借助 AI 能力提效降本。",
           "flow": "导入 API → AI 分析接口结构与质量 → AI 生成测试断言 → AI 生成 API 文档 → AI 生成测试场景 → 审核中心审核 AI 产出 → 采纳内容 → 执行场景 → 失败时 AI 自动诊断",
+          "steps": [
+            "首次使用先在设置 → 大模型配置中配置 OpenAI、DeepSeek、Ollama、LM Studio 或自定义 OpenAI 兼容服务，并测试连接。",
+            "导入 API 后，AI 会生成文档、断言、质量建议，相关任务状态可在设置 → AI 任务与队列中查看。",
+            "所有重要 AI 产出进入审核中心，用户可对文档、断言、场景、数据模板、巡检做采纳、部分采纳或放弃。",
+            "采纳后的结果会写入 API DSL、场景或巡检配置；审核反馈可沉淀到项目记忆，提升后续生成质量。",
+            "执行失败时进入执行详情查看 AI 诊断；也可按 Cmd/Ctrl+K 唤起 AI 助手，让它结合当前页面上下文解释问题。"
+          ],
           "tips": ["AI 生成内容需要人工审核，审核中心提供统一的审核入口", "AI 快捷键 Cmd/Ctrl+K 可在任何页面唤起 AI 助手"]
         },
         {
           "title": "Mock 服务模拟第三方依赖",
           "background": "当被测接口依赖尚未就绪的第三方服务时，使用 Mock 服务模拟其响应。",
           "flow": "进入 Mock 服务页 → 新建 Mock 服务 → 添加路由规则（路径、HTTP 方法）→ 配置响应模板（状态码、Body、Headers）→ 启用服务 → 获取 Mock URL → 在场景步骤或直接请求中使用 Mock URL 替代真实地址",
-          "tips": ["Mock 响应支持模板变量，可引用请求中的参数动态生成响应", "调用日志可帮助调试 Mock 规则是否按预期匹配"]
+          "steps": [
+            "进入 Mock 服务页新建服务，设置名称、slug、默认响应、是否公开访问以及访问 Key。",
+            "新增路由规则，配置 method、path、优先级和基础响应；path 支持精确路径、通配后缀和路径参数。",
+            "如果同一路由需要多种响应，编辑响应分支 JSON，按 query/header/body/jsonpath 等条件区分 VIP、异常、空数据等情况。",
+            "响应模板中可引用 {{query.id}}、{{headers.authorization}}、{{body.user.id}}、{{sql.user.first.name}}、{{mock.id}}、{{timestamp}}。",
+            "需要有状态响应时，为分支配置只读 SQL 查询，把查询结果注入模板；也可从 API 文档生成默认 Case。",
+            "使用手动测试或复制 curl 验证命中轨迹，再把 Mock URL 写入场景步骤或执行环境变量。"
+          ],
+          "tips": ["Mock 响应支持模板变量，可引用请求中的参数、SQL 查询和 mock_data 动态生成响应", "调用日志可帮助调试 Mock 规则是否按预期匹配"]
         },
         {
           "title": "差异比对检测与接口同步",
           "background": "当已存在的 API 被重新导入时（如 HAR/Swagger 更新），通过差异比对功能对比新旧版本并选择性同步变更。",
           "flow": "导入 HAR/Swagger 等外部文件 → 系统检测到已存在的 API → 进入差异比对页 → 查看并排字段级对比（新增/删除/修改高亮）→ 逐字段决定采纳或保留 → 提交同步 → API 资产按决策更新",
+          "steps": [
+            "重新导入 HAR、Swagger/OpenAPI 或其他来源时，系统按接口签名匹配已有资产。",
+            "存在字段变化时生成差异记录，并按新增、删除、修改展示 Header、Query、Body、响应字段和文档差异。",
+            "进入差异比对页，优先处理高严重度变更；逐字段选择采纳新版本、保留旧版本或忽略。",
+            "提交同步后，API DSL 按你的决策更新，差异记录保留状态和处理历史。",
+            "对高风险变更建议重新触发 AI 分析，并检查断言、场景和巡检是否需要同步调整。"
+          ],
           "tips": [
             "差异比对页面按接口分组展示，每个接口独立决策",
             "支持「全部采纳」快速同步所有变更，「全部放弃」保留现有版本",
@@ -2283,10 +2394,50 @@
           "title": "跨环境 API 回归测试",
           "background": "在多个执行环境（开发/测试/预发布/生产）上运行同一套测试场景，对比各环境结果以发现环境差异或回归问题。",
           "flow": "确保各执行环境已在设置中配置 → 进入场景页 → 选择已有场景 → 切换目标执行环境 → 分别执行 → 进入执行历史页 → 对比两次执行结果 → 发现环境差异或回归缺陷 → 修复后重新验证",
+          "steps": [
+            "在设置 → 执行环境中为 dev/test/staging/prod 配置 Base URL 和变量，例如 TOKEN、TENANT_ID、API_KEY。",
+            "场景步骤中的 URL、Header、Body 使用 {{env.VAR}} 引用环境变量，避免写死环境地址和密钥。",
+            "选择同一套场景，分别切换执行环境运行，执行记录会保留环境、触发方式、耗时和响应快照。",
+            "进入执行历史或执行详情，对比不同环境的响应结构、业务字段、断言结果和耗时差异。",
+            "把稳定的回归场景加入巡检任务，实现定时跨环境验证。"
+          ],
           "tips": [
             "执行环境在「设置 → 执行环境」中预先配置 Base URL 和变量",
             "同一场景在不同环境执行后，可在执行历史中使用「结果对比」功能逐步骤对比",
             "建议将回归测试场景加入巡检任务，实现定时自动化回归"
+          ]
+        },
+        {
+          "title": "SQL 数据源校验",
+          "background": "当接口响应需要和数据库状态一致，或 Mock/场景需要从数据库读取动态数据时，可配置只读数据库服务和 SQL 片段。",
+          "flow": "进入设置 → 数据库服务 → 新建 PostgreSQL/MySQL/SQLite 数据源 → 新建 SQL 片段并试运行 → 在场景步骤配置 pre_sql/post_sql 或在 Mock 分支中引用 SQL → 执行后使用 SQL 结果断言响应",
+          "steps": [
+            "在设置 → 数据库服务中新建数据源，填写连接信息、超时和最大行数；系统仅允许只读 SELECT。",
+            "新建 SQL 片段并使用参数 JSON 试运行，例如 {\"user_id\":\"{{step_1.response.body.data.id}}\"}。",
+            "在场景步骤里配置 pre_sql 获取请求前置数据，或 post_sql 在响应后校验落库结果。",
+            "后续步骤可通过 {{sql_step_2.rows[0].column}} 引用 SQL 查询结果，也可以把 SQL 结果用于断言。",
+            "在 Mock 响应分支中配置 sql_queries，把结果注入 {{sql.user.first.name}} 等模板变量。"
+          ],
+          "tips": [
+            "生产环境 SQLite 文件访问有路径限制，数据库密码会加密存储",
+            "SQL 片段建议控制返回行数，避免把大量数据塞入执行上下文",
+            "数据库校验适合订单状态、库存扣减、用户权限等需要后端状态确认的场景"
+          ]
+        },
+        {
+          "title": "AI 助手协作处理资产",
+          "background": "全局 AI 助手能理解当前页面上下文，适合用自然语言查询资产、生成建议、解释失败原因或触发受控写操作。",
+          "flow": "任意页面按 Cmd/Ctrl+K → 提问或下达明确任务 → AI 检索当前项目 API/场景/巡检/知识库 → 对写操作给出确认 → 生成结果进入审核中心或直接调用受控工具 → 对话结束后自动归档到会话记忆",
+          "steps": [
+            "在设置中确保 LLM 配置可用，并为不同任务按需要配置模型路由和 Prompt 版本。",
+            "在 API、场景、执行详情、Mock 或知识库页面唤起 AI 助手，它会带上当前页面类型和项目上下文。",
+            "可以询问“这个接口缺哪些断言”、“帮我找最近失败的巡检”、“基于这些 API 生成登录场景”等问题。",
+            "涉及创建、更新、删除等写操作时，AI 会走确认流程；生成类结果通常进入审核中心等待人工采纳。",
+            "对话结束后系统将摘要归档到 L3 会话记忆，后续可通过知识库或 AI 检索复用。"
+          ],
+          "tips": [
+            "问题越具体，AI 越容易选对工具和范围，例如带上 API 名称、路径、场景名或失败执行 ID",
+            "AI 助手适合辅助分析与批量建议，关键资产变更仍建议通过审核中心确认"
           ]
         }
       ]
@@ -2310,7 +2461,7 @@
       },
       "roles": {
         "title": "权限与角色说明",
-        "desc": "平台内置两种角色：管理员（Admin）和普通用户（User）。管理员拥有全部权限，包括用户管理、系统设置、项目管理等敏感操作；普通用户可进行业务的日常操作（API 管理、场景执行、Mock 配置等），但无法访问用户管理和部分系统设置。新用户注册后默认角色为普通用户，需管理员在「用户管理」中提升权限。"
+        "desc": "平台后端 RBAC 内置 admin、editor、viewer、monitor_admin 四类角色。admin 拥有全部权限并可跨项目访问；editor 可管理 API、场景、巡检、数据工厂、Mock、环境和知识库等业务资产；monitor_admin 偏向巡检与告警管理；viewer 以只读访问为主。非管理员用户按所属 project_id 做数据隔离，自助注册默认 viewer，敏感角色需管理员分配。"
       }
     },
     "examples": {
@@ -2343,23 +2494,26 @@
         },
         {
           "title": "鉴权配置示例",
-          "desc": "在 API 详情页的「鉴权」标签中配置认证方式，支持多种主流鉴权类型。",
+          "desc": "在 API 或场景步骤的「鉴权」标签中配置认证方式，支持 Bearer Token、Basic Auth、API Key 和无鉴权。",
           "samples": [
             { "label": "Bearer Token", "code": "类型: Bearer Token → Token: {{env.API_TOKEN}} 或直接填写 token 值" },
             { "label": "Basic Auth", "code": "类型: Basic Auth → 用户名: admin → 密码: {{env.BASIC_PASS}}" },
             { "label": "API Key", "code": "类型: API Key → Key: X-API-Key → 值: {{env.API_KEY}} → 位置: Header" },
-            { "label": "OAuth 2.0", "code": "类型: OAuth 2.0 → Grant Type: Client Credentials → Token URL: {{env.AUTH_URL}}/token → Client ID: {{env.CLIENT_ID}}" },
+            { "label": "Query API Key", "code": "类型: API Key → Key: access_token → 值: {{env.ACCESS_TOKEN}} → 位置: Query" },
             { "label": "无鉴权", "code": "类型: None → 不附加任何认证信息" }
           ]
         },
         {
           "title": "Mock 响应模板示例",
-          "desc": "Mock 服务的响应体支持模板变量，可引用请求中的参数动态生成响应内容。",
+          "desc": "Mock 服务响应体支持双花括号模板变量，可引用请求参数、请求头、请求体、路径参数、SQL 查询结果、mock_data 和内置时间戳。",
           "samples": [
-            { "label": "引用请求路径参数", "code": "{\"user_id\": {{request.params.userId}}, \"name\": \"mock_user_{{request.params.userId}}\"}" },
-            { "label": "引用请求体字段", "code": "{\"echo\": {{request.body.message}}, \"timestamp\": {{request.body.ts}}" },
+            { "label": "引用 Query 参数", "code": "{\"user_id\": \"{{query.id}}\", \"name\": \"mock_user_{{query.id}}\"}" },
+            { "label": "引用路径参数", "code": "{\"user_id\": \"{{path_params.userId}}\", \"path\": \"{{path}}\"}" },
+            { "label": "引用请求体字段", "code": "{\"echo\": \"{{body.message}}\", \"timestamp\": \"{{timestamp}}\"}" },
+            { "label": "引用请求头", "code": "{\"token\": \"{{headers.authorization}}\", \"method\": \"{{method}}\"}" },
+            { "label": "引用 SQL 查询结果", "code": "{\"name\": \"{{sql.user.first.name}}\", \"level\": \"{{sql.user.first.level}}\"}" },
             { "label": "固定 JSON 响应", "code": "{\"code\": 0, \"message\": \"success\", \"data\": {\"id\": 1, \"name\": \"test\"}}" },
-            { "label": "随机数据响应", "code": "{\"code\": 0, \"data\": {\"order_no\": \"ORD{{$randomInt(1000,9999)}}\", \"time\": \"{{$isoTimestamp}}\"}}" }
+            { "label": "引用 mock_data 字段", "code": "{\"code\": 0, \"mock_id\": \"{{mock.id}}\", \"time\": \"{{timestamp}}\"}" }
           ]
         },
         {
@@ -2384,6 +2538,38 @@
             { "label": "工作日每小时", "code": "0 * * * 1-5 (周一至周五)" },
             { "label": "每周一凌晨 2 点", "code": "0 2 * * 1" },
             { "label": "每月 1 号上午 10 点", "code": "0 10 1 * *" }
+          ]
+        },
+        {
+          "title": "SQL 片段与引用示例",
+          "desc": "SQL 数据源用于场景、巡检和 Mock 中的只读查询。SQL 参数可以引用步骤上下文，查询结果也可被后续步骤或模板引用。",
+          "samples": [
+            { "label": "SQL 片段", "code": "select id, status, total_amount from orders where id = :order_id limit 1" },
+            { "label": "参数 JSON", "code": "{\"order_id\": \"{{step_1.response.body.data.order_id}}\"}" },
+            { "label": "场景引用首行字段", "code": "{{sql_step_2.rows[0].status}}" },
+            { "label": "Mock 模板引用 SQL", "code": "{\"order_id\":\"{{sql.order.first.id}}\",\"status\":\"{{sql.order.first.status}}\"}" },
+            { "label": "断言写法", "code": "类型: JSONPath → 表达式: $.data.status → 操作符: 等于 → 期望值: {{sql_step_2.rows[0].status}}" }
+          ]
+        },
+        {
+          "title": "AI 助手指令示例",
+          "desc": "AI 助手可结合当前页面上下文检索和操作平台资产。写操作通常需要确认，生成类内容会进入审核中心。",
+          "samples": [
+            { "label": "分析接口质量", "code": "这个接口的文档、断言和场景覆盖还缺什么？按风险排序给我建议。" },
+            { "label": "生成断言建议", "code": "基于当前 API 的响应样例，生成状态码、业务 code、核心字段和响应时间断言。" },
+            { "label": "排查失败执行", "code": "解释这个执行失败的根因，并告诉我应该检查环境变量、请求参数还是后端返回。" },
+            { "label": "批量生成巡检", "code": "为当前项目未覆盖巡检的核心 API 生成低误报巡检建议，优先登录和订单链路。" },
+            { "label": "沉淀知识", "code": "把这个接口的分页响应字段和断言模式整理成项目知识，供后续生成复用。" }
+          ]
+        },
+        {
+          "title": "导入与导出样例",
+          "desc": "API 资产支持从 cURL、HAR、OpenAPI 等来源导入，也可批量导出 OpenAPI JSON 交给研发、网关或文档系统复用。",
+          "samples": [
+            { "label": "cURL 导入", "code": "curl -X POST \"{{env.BASE_URL}}/api/orders\" -H \"Authorization: Bearer {{env.API_TOKEN}}\" -H \"Content-Type: application/json\" -d '{\"sku\":\"SKU-1\",\"count\":1}'" },
+            { "label": "HAR 导入来源", "code": "Chrome DevTools → Network → Export HAR → API 接口页导入" },
+            { "label": "OpenAPI 导出用途", "code": "API 列表 → 批量选择 → 导出 OpenAPI JSON → 提交给网关/研发/外部文档系统" },
+            { "label": "差异同步", "code": "重新导入同一路径和方法 → 差异比对 → 字段级采纳/保留 → 同步 API DSL" }
           ]
         }
       ]

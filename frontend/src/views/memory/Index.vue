@@ -198,6 +198,55 @@
           </el-card>
         </el-tab-pane>
 
+        <el-tab-pane :label="$t('memory.tabCleanup')" name="cleanup">
+          <el-card style="padding:0" v-loading="loading.cleanup">
+            <el-table :data="cleanupItems" row-key="id" max-height="calc(100vh - 280px)" :empty-text="$t('memory.emptyCleanup')">
+              <el-table-column :label="$t('memory.colReason')" width="170">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="cleanupReasonType(row.reason)">{{ $t('memory.cleanup_' + row.reason) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colLayer')" width="90">
+                <template #default="{ row }">
+                  <span class="mono">{{ String(row.layer || '').toUpperCase() }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colTitle')" min-width="220">
+                <template #default="{ row }">
+                  <div class="cleanup-title">{{ row.title || row.id }}</div>
+                  <div class="text-3 cleanup-id mono">{{ row.id }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colTags')" width="200">
+                <template #default="{ row }">
+                  <el-tag v-for="tag in (row.tags || [])" :key="tag" size="small" class="tag-chip">{{ tagLabel(tag) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colScore')" width="80" align="center">
+                <template #default="{ row }">
+                  <span class="mono">{{ row.score || 0 }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colUpdatedAt')" width="160">
+                <template #default="{ row }">{{ row.updated_at || '—' }}</template>
+              </el-table-column>
+              <el-table-column :label="$t('memory.colAction')" width="90" align="center">
+                <template #default="{ row }">
+                  <el-popconfirm :title="$t('memory.confirmDeleteCleanup')" @confirm="removeCleanupCandidate(row)">
+                    <template #reference>
+                      <el-button type="danger" size="small" text :disabled="!cleanupCanDelete(row)">{{ $t('memory.delete') }}</el-button>
+                    </template>
+                  </el-popconfirm>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="flex-between" style="padding:12px 16px">
+              <span class="text-3">{{ $t('memory.totalItems', { n: cleanupTotal }) }}</span>
+              <el-button size="small" @click="loadCleanup">{{ $t('memory.refreshCleanup') }}</el-button>
+            </div>
+          </el-card>
+        </el-tab-pane>
+
         <el-tab-pane :label="$t('memory.tabSearch')" name="search">
           <el-card style="padding:0" v-loading="searching">
             <div v-if="searchResults" class="search-results">
@@ -263,7 +312,7 @@ const projectId = computed(() => projectStore.current || null)
 const searching = ref(false)
 const searchResults = ref(null)
 
-const loading = reactive({ l1: false, l2: false, l3: false })
+const loading = reactive({ l1: false, l2: false, l3: false, cleanup: false })
 
 // L1 state
 const l1Items = ref([])
@@ -281,6 +330,9 @@ const l3Items = ref([])
 const l3Total = ref(0)
 const l3Page = ref(1)
 const l3PageSize = 30
+
+const cleanupItems = ref([])
+const cleanupTotal = ref(0)
 
 // ── loaders ───────────────────────────────────────────────────
 
@@ -351,10 +403,27 @@ async function doSearch() {
   }
 }
 
+async function loadCleanup() {
+  loading.cleanup = true
+  try {
+    const params = { limit: 100 }
+    if (projectId.value) params.project_id = projectId.value
+    const res = await memoryApi.cleanupCandidates(params)
+    cleanupItems.value = res.items || []
+    cleanupTotal.value = res.total || 0
+  } catch (e) {
+    toast.error(t('memory.loadFailed'))
+    console.error('loadCleanup failed:', e)
+  } finally {
+    loading.cleanup = false
+  }
+}
+
 function loadActive() {
   if (activeTab.value === 'l1') loadL1()
   else if (activeTab.value === 'l2') loadL2()
   else if (activeTab.value === 'l3') loadL3()
+  else if (activeTab.value === 'cleanup') loadCleanup()
 }
 
 /* 项目下拉切换：调用 store.select() 同步状态，loadActive 由 watch 自动触发 */
@@ -395,6 +464,40 @@ async function removeL3(sessionId) {
     toast.error(t('memory.deleteFailed'))
     console.error('delete L3 failed:', e)
   }
+}
+
+function cleanupTargetId(row) {
+  return row?.item?.key || row?.item?.id || row?.item?.session_id || row?.id || ''
+}
+
+function cleanupCanDelete(row) {
+  const layer = String(row?.layer || '').toLowerCase()
+  return !!cleanupTargetId(row) && ['l1', 'l2', 'l3'].includes(layer)
+}
+
+async function removeCleanupCandidate(row) {
+  const id = cleanupTargetId(row)
+  const layer = String(row?.layer || '').toLowerCase()
+  try {
+    if (layer === 'l1') await memoryApi.deleteL1(id)
+    else if (layer === 'l2') await memoryApi.deleteL2(id)
+    else if (layer === 'l3') await memoryApi.deleteL3(id)
+    else return
+    await loadCleanup()
+  } catch (e) {
+    toast.error(t('memory.deleteFailed'))
+    console.error('delete cleanup candidate failed:', e)
+  }
+}
+
+function cleanupReasonType(reason) {
+  const map = {
+    orphan_api_reference: 'danger',
+    low_confidence: 'warning',
+    duplicate_title: 'info',
+    stale_unused: '',
+  }
+  return map[reason] || 'info'
 }
 
 // 类型翻译：后端 type 可能带 "memory.type_" 前缀，去掉前缀后尝试 i18n 翻译

@@ -7,6 +7,7 @@ RUN npm install
 
 COPY frontend/index.html ./
 COPY frontend/src/ ./src/
+COPY frontend/public/ ./public/
 RUN npm run build
 
 # Serve stage

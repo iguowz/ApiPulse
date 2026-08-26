@@ -56,6 +56,7 @@ export const useToastStore = defineStore('toast', () => {
   function success(msg) { ElMessage.success(msg) }
   function error(msg)   { ElMessage.error(msg) }
   function info(msg)    { ElMessage.info(msg) }
+  function warning(msg) { ElMessage.warning(msg) }
 
   // 带操作按钮的 toast：消息 + 可点击的操作链接（延长显示时间 10s）
   function successAction(msg, actionLabel, onClick) {
@@ -72,5 +73,5 @@ export const useToastStore = defineStore('toast', () => {
     })
   }
 
-  return { success, error, info, successAction }
+  return { success, error, info, warning, successAction }
 })

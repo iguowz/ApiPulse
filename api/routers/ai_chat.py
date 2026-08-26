@@ -6,7 +6,7 @@ AI 对话路由 —— P1-3 AI 助手对话面板
 
 能力：
 1. SSE 流式响应（逐 token 返回，前端打字机效果）
-2. 对话上下文管理（Redis 存近 20 轮，按 user_id + session_id 隔离）
+2. 对话上下文管理（Redis 按 user_id + session_id 隔离）
 3. 上下文感知：前端注入当前页面上下文（如 api_id/scenario_id），AI 回答更精准
 4. 工具调用：AI 可调用 search_api/get_execution 等只读工具增强回答
 """
@@ -16,6 +16,7 @@ import json
 import time
 import asyncio
 import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
@@ -51,7 +52,7 @@ router = APIRouter(tags=["AIChat"])
 
 # 对话上下文 Redis 配置
 CHAT_CTX_PREFIX = "chat_ctx"
-CHAT_CTX_MAX_ROUNDS = 20  # 保留最近 20 轮
+CHAT_CTX_MAX_ROUNDS = 20  # 对话保留窗口（按 user+assistant 成对计数）
 CHAT_CTX_TTL = 86400 * 7  # 7 天过期
 
 _CHAT_SYSTEM = """\
@@ -137,6 +138,7 @@ _AVAILABLE_TOOLS = _READONLY_TOOLS + _WRITE_TOOL_NAMES
 
 # 待确认写操作暂存（内存），5 分钟 TTL 自动过期。
 _pending_actions: dict[str, dict[str, Any]] = {}
+_completed_actions: dict[str, dict[str, Any]] = {}
 _PENDING_TTL = 300
 
 
@@ -345,14 +347,16 @@ async def get_chat_history(
 @router.delete("/ai/chat/history/{session_id}")
 async def clear_chat_history(
     session_id: str,
+    project_id: str | None = None,
     user: dict = Depends(require_auth),
 ):
     """清除指定会话的对话历史（先归档 L3 → 再清 L4 + Redis）。"""
     user_id = user["username"]
+    archive_project_id = visible_project_id(user, project_id)
     memory = _get_memory()
     if memory:
         # 先将会话归档到 L3，避免丢失对话记录
-        await memory.end_session(user_id, session_id, "default")
+        await memory.end_session(user_id, session_id, archive_project_id)
         # 清 L4
         await memory.delete_l4(user_id, session_id)
     redis = await get_redis()
@@ -1217,6 +1221,7 @@ def _stage_pending_action(
 
     project_id = visible_project_id(user, context.get("project_id"))
     action_id = uuid.uuid4().hex
+    expires_at = time.time() + _PENDING_TTL
     _pending_actions[action_id] = {
         "tool": name,
         "args": args,
@@ -1224,6 +1229,7 @@ def _stage_pending_action(
         "context": context,
         "project_id": project_id,
         "created_at": time.time(),
+        "expires_at": expires_at,
         "db": db,
     }
 
@@ -1238,6 +1244,16 @@ def _stage_pending_action(
         "target_name": summary_bundle.get("target_name", ""),
         "target_type": summary_bundle.get("target_type", ""),
         "params_preview": summary_bundle.get("params_preview", args),
+        "diff_preview": summary_bundle.get("diff_preview", {}),
+        "permission_result": {
+            "allowed": True,
+            "permission": "ai_chat:write",
+            "role": user.get("role", ""),
+        },
+        "reversible": summary_bundle.get("reversible", False),
+        "undo_hint": summary_bundle.get("undo_hint", "该操作会写入审计日志；如需回滚，请从对应页面手动恢复或重新编辑。"),
+        "references": summary_bundle.get("references", _refs_for_action(name, args, project_id)),
+        "expires_at": datetime.fromtimestamp(expires_at, timezone(timedelta(hours=8))).replace(tzinfo=None).isoformat(),
     })
 
     # 返回给 LLM 的结果：明确告知等待确认
@@ -1245,7 +1261,49 @@ def _stage_pending_action(
         "action_id": action_id,
         "status": "pending_confirmation",
         "message": f"操作提案已生成，等待用户确认后执行。action_id={action_id}",
+        "references": summary_bundle.get("references", _refs_for_action(name, args, project_id)),
     }
+
+
+def _refs_for_action(name: str, args: dict[str, Any], project_id: str) -> list[dict[str, Any]]:
+    """写工具提案引用，统一前端跳转结构。"""
+    mapping = [
+        ("api_id", "api", "/apis/{}"),
+        ("scenario_id", "scenario", "/scenarios/{}"),
+        ("monitor_id", "monitor", "/monitor"),
+        ("template_id", "data_template", "/factory"),
+        ("service_id", "mock_service", "/mock-services"),
+        ("diff_id", "import_diff", "/import-diffs"),
+    ]
+    refs: list[dict[str, Any]] = []
+    for key, ref_type, route_tpl in mapping:
+        target_id = args.get(key)
+        if not target_id:
+            continue
+        route = route_tpl.format(target_id) if "{}" in route_tpl else route_tpl
+        refs.append({
+            "type": ref_type,
+            "id": str(target_id),
+            "title": str(target_id),
+            "path": "",
+            "route": route,
+            "project_id": project_id,
+        })
+    if name.startswith("create_"):
+        refs.append({
+            "type": name.replace("create_", ""),
+            "id": str(args.get("name") or args.get("slug") or name),
+            "title": str(args.get("name") or name),
+            "path": "",
+            "route": {
+                "create_scenario": "/scenarios",
+                "create_monitor": "/monitor",
+                "create_data_template": "/factory",
+                "create_mock_service": "/mock-services",
+            }.get(name, "/dashboard"),
+            "project_id": project_id,
+        })
+    return refs[:8]
 
 
 def _build_write_summary(
@@ -1999,17 +2057,24 @@ async def confirm_action(
     """
     user = _get_user_from_request(request) or {}
     pending = _pending_actions.get(action_id)
+    if not pending and action_id in _completed_actions:
+        return _completed_actions[action_id]
     if not pending:
         raise HTTPException(404, "待确认操作不存在或已过期（5分钟有效期）")
 
     if not approved:
         # 用户拒绝：清理 pending，不执行
         _pending_actions.pop(action_id, None)
-        return {
+        response = {
             "action_id": action_id,
             "approved": False,
+            "success": True,
+            "status": "cancelled",
             "message": "操作已取消",
+            "completed_at": time.time(),
         }
+        _completed_actions[action_id] = response
+        return response
 
     # 用户确认：清理过期 pending，执行写操作
     _clean_expired_pending()
@@ -2024,29 +2089,42 @@ async def confirm_action(
         _pending_actions.pop(action_id, None)
 
         if "error" in result:
-            return {
+            response = {
                 "action_id": action_id,
                 "approved": True,
+                "success": False,
                 "status": "failed",
                 "message": result.get("error", "执行失败"),
+                "result": result,
+                "completed_at": time.time(),
             }
+            _completed_actions[action_id] = response
+            return response
 
-        return {
+        response = {
             "action_id": action_id,
             "approved": True,
+            "success": True,
             "status": "executed",
             "message": result.get("message", "操作完成"),
             "result": result,
+            "completed_at": time.time(),
         }
+        _completed_actions[action_id] = response
+        return response
     except Exception as e:
         logger.error("Write tool execution failed: tool={}, error={}", tool_name, e)
         _pending_actions.pop(action_id, None)
-        return {
+        response = {
             "action_id": action_id,
             "approved": True,
+            "success": False,
             "status": "failed",
             "message": f"操作执行失败: {str(e)[:200]}",
+            "completed_at": time.time(),
         }
+        _completed_actions[action_id] = response
+        return response
 
 
 def _clean_expired_pending():
@@ -2056,6 +2134,9 @@ def _clean_expired_pending():
     for aid in expired:
         _pending_actions.pop(aid, None)
         logger.info("Pending action {} expired and removed", aid)
+    completed_expired = [aid for aid, result in _completed_actions.items() if now - result.get("completed_at", now) > _PENDING_TTL]
+    for aid in completed_expired:
+        _completed_actions.pop(aid, None)
 
 
 async def _apply_context_prefetch(

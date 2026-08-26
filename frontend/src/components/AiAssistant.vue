@@ -54,6 +54,36 @@
                 {{ refTitle(ref) }}
               </button>
             </div>
+            <div v-if="msg.proposals?.length" class="aa-proposal-list">
+              <div v-for="proposal in msg.proposals" :key="proposal.action_id" class="aa-proposal">
+                <div class="aa-proposal-head">
+                  <div>
+                    <div class="aa-proposal-title">{{ proposal.summary || toolLabel(proposal.tool) }}</div>
+                    <div class="aa-proposal-meta">
+                      {{ proposal.target_type || proposal.tool }}
+                      <span v-if="proposal.permission_result?.role">· {{ proposal.permission_result.role }}</span>
+                      <span v-if="proposal.expires_at">· {{ fmtProposalTime(proposal.expires_at) }}</span>
+                    </div>
+                  </div>
+                  <span class="aa-proposal-status" :class="`is-${proposal.status || 'pending'}`">{{ proposalStatusLabel(proposal) }}</span>
+                </div>
+                <pre v-if="proposal.params_preview" class="aa-proposal-preview">{{ compactJson(proposal.params_preview) }}</pre>
+                <div v-if="proposal.references?.length" class="aa-ref-list">
+                  <button v-for="ref in proposal.references" :key="`proposal-${proposal.action_id}-${ref.type}-${ref.id}`" class="aa-ref" @click="goRef(ref)">
+                    {{ refTitle(ref) }}
+                  </button>
+                </div>
+                <div v-if="proposal.status === 'failed'" class="aa-proposal-error">{{ proposal.message }}</div>
+                <div v-if="!proposal.status || proposal.status === 'pending'" class="aa-proposal-actions">
+                  <button class="aa-proposal-btn is-primary" @click="confirmProposal(msg, proposal, true)">
+                    {{ t('ai_assistant.confirm_execute') }}
+                  </button>
+                  <button class="aa-proposal-btn" @click="confirmProposal(msg, proposal, false)">
+                    {{ t('ai_assistant.confirm_cancel') }}
+                  </button>
+                </div>
+              </div>
+            </div>
             <!-- AI 助手对话不进入审核中心 -->
             <span v-if="msg.streaming" class="aa-cursor">▋</span>
           </div>
@@ -121,9 +151,15 @@ const userScrolledUp = ref(false)
 // 上下文感知：根据当前路由推断页面上下文，不同页面携带不同的上下文信息和提示问题
 // 包含 project_id 以确保 L3 会话记忆与当前项目关联
 const projectStore = useProjectStore()
+const LEGACY_SESSION_KEY = 'ai_assistant_session_id'
+const LEGACY_MESSAGES_KEY = 'ai-chat-messages'
+const currentProjectId = () => projectStore.current || 'default'
+const sessionStorageKey = (projectId = currentProjectId()) => `ai_assistant_session_id:${projectId || 'default'}`
+const messagesStorageKey = (projectId = currentProjectId()) => `ai-chat-messages:${projectId || 'default'}`
+
 const context = computed(() => {
   const p = route.path
-  const project_id = projectStore.current || 'default'
+  const project_id = currentProjectId()
   // 详情页（携带 ID，触发后端预取和精准回答）
   if (p.startsWith('/apis/') && route.params.id) {
     return { type: 'api', id: route.params.id, page: 'API 详情', project_id }
@@ -221,7 +257,7 @@ async function sendMessage(text) {
 
   inputText.value = ''
   messages.value.push({ role: 'user', content })
-  const assistantMsg = { role: 'assistant', content: '', streaming: true, tools: [], references: [] }
+  const assistantMsg = { role: 'assistant', content: '', streaming: true, tools: [], references: [], proposals: [] }
   messages.value.push(assistantMsg)
   streaming.value = true
   await scrollToBottom()
@@ -295,37 +331,8 @@ async function sendMessage(text) {
             } else if (data.type === 'error') {
               assistantMsg.content = `⚠️ ${data.message}`
             } else if (data.type === 'confirm_required') {
-              // 写操作需要用户确认：使用 ElMessageBox.confirm 弹窗（M4）
-              assistantMsg.content += `\n\n> 🔧 **${t('ai_assistant.confirm_title')}**：${data.summary || data.tool}`
-              await scrollToBottom()
-              let confirmed = false
-              try {
-                await ElMessageBox.confirm(
-                  data.summary || data.params_preview ? JSON.stringify(data.params_preview, null, 2) : '',
-                  t('ai_assistant.confirm_title'),
-                  { confirmButtonText: t('ai_assistant.confirm_execute'), cancelButtonText: t('ai_assistant.confirm_cancel'), type: 'warning', zIndex: 10000 }
-                )
-                confirmed = true
-              } catch (_) {
-                // 用户取消或关闭弹窗
-              }
-              if (confirmed) {
-                try {
-                  const resp = await fetch('/api/ai/chat/confirm', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authStore.token}` },
-                    body: JSON.stringify({ action_id: data.action_id, approved: true }),
-                  })
-                  const result = await resp.json()
-                  if (!resp.ok || !result.success) {
-                    assistantMsg.content += `\n\n❌ ${result.message || t('ai_assistant.write_failed')}`
-                  } else {
-                    assistantMsg.content += `\n\n✅ ${result.result?.message || t('ai_assistant.write_success')}`
-                  }
-                } catch (e) {
-                  assistantMsg.content += `\n\n❌ ${t('ai_assistant.write_failed')}: ${e.message}`
-                }
-              }
+              assistantMsg.proposals.push({ ...data, status: 'pending' })
+              assistantMsg.references = mergeRefs(assistantMsg.references, data.references || [])
               await scrollToBottom()
             }
             // write_executed / write_failed 事件由 confirm_required 中的 POST 请求处理，不再重复追加
@@ -366,6 +373,35 @@ function stopStreaming() {
   abortController.value?.abort()
 }
 
+async function confirmProposal(message, proposal, approved) {
+  if (!proposal?.action_id || proposal.status === 'running') return
+  proposal.status = 'running'
+  proposal.message = ''
+  try {
+    const resp = await fetch('/api/ai/chat/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authStore.token}` },
+      body: JSON.stringify({ action_id: proposal.action_id, approved }),
+    })
+    const result = await resp.json()
+    if (!resp.ok || result.success === false || result.status === 'failed') {
+      proposal.status = 'failed'
+      proposal.message = result.message || t('ai_assistant.write_failed')
+      message.content += `\n\n${t('ai_assistant.write_failed')}: ${proposal.message}`
+    } else {
+      proposal.status = approved ? 'executed' : 'cancelled'
+      proposal.message = result.message || (approved ? t('ai_assistant.write_success') : t('ai_assistant.confirm_cancel'))
+      message.content += `\n\n${proposal.message}`
+      if (result.result?.references) message.references = mergeRefs(message.references, result.result.references)
+    }
+  } catch (e) {
+    proposal.status = 'failed'
+    proposal.message = `${t('ai_assistant.write_failed')}: ${e.message}`
+    message.content += `\n\n${proposal.message}`
+  }
+  await scrollToBottom()
+}
+
 // P1-4: 工具标签名称改用 i18n，消除硬编码中文
 function toolLabel(name) {
   const key = `ai_assistant.tool_${name}`
@@ -387,6 +423,31 @@ function refTitle(ref) {
   const label = t(typeKey)
   const typeName = label !== typeKey ? label : (ref.type || '')
   return `${typeName}: ${ref.title || ref.id}`
+}
+
+function compactJson(value) {
+  try {
+    const text = JSON.stringify(value, null, 2)
+    return text.length > 800 ? `${text.slice(0, 800)}...` : text
+  } catch (_) {
+    return String(value || '')
+  }
+}
+
+function fmtProposalTime(value) {
+  return String(value || '').replace('T', ' ').slice(0, 16)
+}
+
+function proposalStatusLabel(proposal) {
+  const status = proposal?.status || 'pending'
+  const map = {
+    pending: t('ai_assistant.proposal_pending'),
+    running: t('ai_assistant.proposal_running'),
+    executed: t('ai_assistant.proposal_executed'),
+    cancelled: t('ai_assistant.proposal_cancelled'),
+    failed: t('ai_assistant.proposal_failed'),
+  }
+  return map[status] || status
 }
 
 function goRef(ref) {
@@ -444,10 +505,13 @@ async function confirmClearHistory() {
 }
 async function doClearHistory() {
   // H3：清除持久化的聊天消息
-  sessionStorage.removeItem('ai-chat-messages')
-  if (sessionId.value) {
+  const projectId = currentProjectId()
+  sessionStorage.removeItem(messagesStorageKey(projectId))
+  localStorage.removeItem(sessionStorageKey(projectId))
+  const clearingSessionId = sessionId.value
+  if (clearingSessionId) {
     try {
-      await fetch(`/api/ai/chat/history/${sessionId.value}`, {
+      await fetch(`/api/ai/chat/history/${encodeURIComponent(clearingSessionId)}?project_id=${encodeURIComponent(projectId)}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${authStore.token}` },
       })
@@ -462,17 +526,20 @@ async function doClearHistory() {
 // H3：聊天消息持久化到 sessionStorage，刷新后恢复最近50条
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
-  const saved = localStorage.getItem('ai_assistant_session_id')
+  localStorage.removeItem(LEGACY_SESSION_KEY)
+  sessionStorage.removeItem(LEGACY_MESSAGES_KEY)
+  const saved = localStorage.getItem(sessionStorageKey())
   if (saved) sessionId.value = saved
   try {
-    const savedMessages = sessionStorage.getItem('ai-chat-messages')
+    const savedMessages = sessionStorage.getItem(messagesStorageKey())
     if (savedMessages) messages.value = JSON.parse(savedMessages)
   } catch (_) { /* sessionStorage 解析失败则忽略 */ }
 })
 // UX 4：sessionId 变化时自动写入 localStorage
 watch(sessionId, (val) => {
-  if (val) localStorage.setItem('ai_assistant_session_id', val)
-  else localStorage.removeItem('ai_assistant_session_id')
+  const key = sessionStorageKey()
+  if (val) localStorage.setItem(key, val)
+  else localStorage.removeItem(key)
 })
 // H3：消息变化时持久化到 sessionStorage（保留最近 50 条，含工具调用和引用）
 watch(messages, (val) => {
@@ -481,14 +548,16 @@ watch(messages, (val) => {
     content: m.content,
     tools: m.tools,
     references: m.references,
+    proposals: m.proposals,
   }))
-  sessionStorage.setItem('ai-chat-messages', JSON.stringify(toSave))
+  sessionStorage.setItem(messagesStorageKey(), JSON.stringify(toSave))
 }, { deep: true })
-// 页面切换时重置会话：context.type 变化说明用户已导航到不同页面，需清空旧对话
+// 页面/项目切换时重置会话：避免跨项目复用 session_id 或消息
 watch(
-  () => `${context.value.type || ''}:${context.value.id || ''}`,
+  () => `${context.value.project_id || 'default'}:${context.value.type || ''}:${context.value.id || ''}`,
   (newKey, oldKey) => {
     if (oldKey && newKey !== oldKey) {
+      if (streaming.value) stopStreaming()
       messages.value = []
       sessionId.value = ''
     }
@@ -608,6 +677,64 @@ onUnmounted(() => {
   font-size: 11px; cursor: pointer;
 }
 .aa-ref:hover { border-color: var(--accent, #4F8EF7); background: rgba(79,142,247,.08); }
+.aa-proposal-list {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 10px;
+}
+.aa-proposal {
+  border: 1px solid rgba(224,175,54,.35);
+  background: rgba(224,175,54,.08);
+  border-radius: 8px;
+  padding: 10px;
+}
+.aa-proposal-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+}
+.aa-proposal-title {
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.aa-proposal-meta {
+  margin-top: 2px; font-size: 11px; color: var(--text-3);
+}
+.aa-proposal-status {
+  flex-shrink: 0; font-size: 11px; padding: 2px 7px; border-radius: 999px;
+  background: var(--bg-3); color: var(--text-2);
+}
+.aa-proposal-status.is-executed { background: rgba(76,175,80,.14); color: var(--green); }
+.aa-proposal-status.is-failed { background: rgba(244,67,54,.12); color: var(--red); }
+.aa-proposal-status.is-running { background: rgba(79,142,247,.12); color: var(--accent); }
+.aa-proposal-status.is-cancelled { background: var(--bg-3); color: var(--text-3); }
+.aa-proposal-preview {
+  margin: 8px 0 0;
+  max-height: 150px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+.aa-proposal-actions {
+  display: flex; gap: 8px; margin-top: 10px;
+}
+.aa-proposal-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-2);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.aa-proposal-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.aa-proposal-error {
+  margin-top: 8px; color: var(--red); font-size: 12px;
+}
 .aa-generation {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   margin-top: 8px; padding: 8px 10px; border-radius: 6px;

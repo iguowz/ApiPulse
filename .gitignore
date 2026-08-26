@@ -33,7 +33,7 @@ logs/
 backend_logs/
 data/
 mnt/
-docs/
+/docs/
 CLAUDE.md
 AGENTS.md
 
@@ -43,6 +43,7 @@ docker-compose.override.yml
 # Test
 .playwright-mcp/
 .pytest_cache/
+test.har
 
 # IDE / Assistant sessions
 .codex/
@@ -51,3 +52,9 @@ docker-compose.override.yml
 # OS
 .DS_Store
 Thumbs.db
+
+# Vendored mermaid renderer (referenced by nothing in app code)
+mermaid.min.js
+
+# 需求文档：临时文档不入库
+ApiPulse需求文档.md

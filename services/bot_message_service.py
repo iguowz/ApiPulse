@@ -132,7 +132,7 @@ class BotMessageService:
         # 保存会话历史
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": text_result})
-        # 保留最近 20 轮
+        # 压缩会话历史到保留窗口
         history = history[-40:]
         await redis.setex(session_key, BOT_SESSION_TTL, json.dumps(history, ensure_ascii=False))
 

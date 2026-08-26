@@ -205,17 +205,23 @@ class MemoryService:
         if not query:
             return docs[skip:skip + limit], len(docs)
 
-        query_lower = query.lower()
+        # 分词评分：多词查询（如 "登录 token"）按词项分别命中打分，避免整串子串匹配召回差
+        terms = [t for t in str(query).split() if t]
         scored: list[tuple[int, dict]] = []
         for doc in docs:
+            title_l = doc.get("title", "").lower()
+            content_l = doc.get("content", "").lower()
+            tag_ls = [t.lower() for t in doc.get("tags", [])]
             score = 0
-            if query_lower in doc.get("title", "").lower():
-                score += 3
-            if query_lower in doc.get("content", "").lower():
-                score += 2
-            for tag in doc.get("tags", []):
-                if query_lower in tag.lower():
-                    score += 1
+            for term in terms:
+                tl = term.lower()
+                if tl in title_l:
+                    score += 3
+                if tl in content_l:
+                    score += 2
+                for tg in tag_ls:
+                    if tl in tg:
+                        score += 1
             if score > 0:
                 scored.append((score, doc))
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -289,15 +295,20 @@ class MemoryService:
         if not query:
             return docs[skip:skip + limit], len(docs)
 
-        query_lower = query.lower()
+        # 分词评分：多词查询按词项命中打分
+        terms = [t for t in str(query).split() if t]
         scored: list[tuple[int, dict]] = []
         for doc in docs:
+            summary_l = doc.get("summary", "").lower()
+            tag_ls = [t.lower() for t in doc.get("tags", [])]
             score = 0
-            if query_lower in doc.get("summary", "").lower():
-                score += 3
-            for tag in doc.get("tags", []):
-                if query_lower in tag.lower():
-                    score += 1
+            for term in terms:
+                tl = term.lower()
+                if tl in summary_l:
+                    score += 3
+                for tg in tag_ls:
+                    if tl in tg:
+                        score += 1
             if score > 0:
                 scored.append((score, doc))
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -511,11 +522,17 @@ class MemoryService:
         # L1 关键词匹配
         l1_docs = await self._db["l1_memories"].find({}).to_list(limit * 2)
         if query:
-            ql = query.lower()
+            terms = [t for t in str(query).split() if t]
+
+            def _l1_hit(d):
+                key_l = d.get("key", "").lower()
+                content_l = d.get("content", "").lower()
+                tag_l = [t.lower() for t in d.get("tags", [])]
+                return any(tl in key_l or tl in content_l or any(tl in tg for tg in tag_l) for tl in terms)
+
             results["l1"] = [
                 {"key": d["key"], "content": d["content"], "tags": d.get("tags", [])}
-                for d in l1_docs
-                if ql in d.get("content", "").lower() or ql in d.get("key", "").lower()
+                for d in l1_docs if _l1_hit(d)
             ][:limit]
 
         # L2 项目记忆
@@ -530,6 +547,101 @@ class MemoryService:
         results["semantic"] = await self.semantic_search(query, max_results=limit)
 
         return results
+
+    async def cleanup_candidates(
+        self,
+        project_id: str | None,
+        *,
+        stale_days: int = 90,
+        low_confidence: float = 0.2,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """找出可人工清理的记忆候选，不自动删除。"""
+        project_filter: dict[str, Any] = {}
+        if project_id:
+            project_filter["project_id"] = project_id
+        cutoff = _beijing_now() - timedelta(days=max(1, stale_days))
+        candidates: list[dict[str, Any]] = []
+
+        def add_candidate(layer: str, reason: str, doc: dict[str, Any], score: int) -> None:
+            item = dict(doc)
+            item.pop("_id", None)
+            candidates.append({
+                "layer": layer,
+                "reason": reason,
+                "score": score,
+                "id": item.get("id") or item.get("key") or item.get("session_id") or item.get("title"),
+                "title": item.get("title") or item.get("key") or item.get("summary", "")[:80],
+                "project_id": item.get("project_id", ""),
+                "tags": item.get("tags", []),
+                "updated_at": item.get("updated_at") or item.get("created_at"),
+                "source": item.get("source", ""),
+                "item": item,
+            })
+
+        low_docs = await self._db["l2_memories"].find({
+            **project_filter,
+            "confidence": {"$lt": low_confidence},
+        }).sort("updated_at", 1).limit(limit).to_list(limit)
+        for doc in low_docs:
+            add_candidate("l2", "low_confidence", doc, 80)
+
+        stale_docs = await self._db["l2_memories"].find({
+            **project_filter,
+            "updated_at": {"$lt": cutoff},
+            "usage_count": {"$in": [0, None]},
+        }).sort("updated_at", 1).limit(limit).to_list(limit)
+        for doc in stale_docs:
+            add_candidate("l2", "stale_unused", doc, 60)
+
+        duplicates = await self._db["l2_memories"].aggregate([
+            {"$match": project_filter or {}},
+            {"$group": {
+                "_id": {"project_id": "$project_id", "type": "$type", "title": "$title"},
+                "count": {"$sum": 1},
+                "ids": {"$push": "$id"},
+            }},
+            {"$match": {"count": {"$gt": 1}}},
+            {"$limit": limit},
+        ]).to_list(limit)
+        for dup in duplicates:
+            ids = [i for i in dup.get("ids", []) if i]
+            docs = await self._db["l2_memories"].find({"id": {"$in": ids[1:]}}).to_list(len(ids))
+            for doc in docs:
+                add_candidate("l2", "duplicate_title", doc, 70)
+
+        api_tags: set[str] = set()
+        for col_name in ("l2_memories", "l3_memories"):
+            docs = await self._db[col_name].find({**project_filter, "tags": {"$regex": "^api:"}}, {"tags": 1}).limit(limit * 2).to_list(limit * 2)
+            for doc in docs:
+                for tag in doc.get("tags", []) or []:
+                    if isinstance(tag, str) and tag.startswith("api:") and len(tag) > 4:
+                        api_tags.add(tag[4:])
+        if api_tags:
+            existing = await self._db["api_dsls"].find(
+                {"id": {"$in": list(api_tags)}},
+                {"_id": 0, "id": 1},
+            ).to_list(len(api_tags))
+            existing_ids = {doc.get("id") for doc in existing}
+            missing_ids = [api_id for api_id in api_tags if api_id not in existing_ids]
+            for api_id in missing_ids[:limit]:
+                for col_name, layer in (("l2_memories", "l2"), ("l3_memories", "l3")):
+                    docs = await self._db[col_name].find({**project_filter, "tags": f"api:{api_id}"}).limit(10).to_list(10)
+                    for doc in docs:
+                        add_candidate(layer, "orphan_api_reference", doc, 90)
+
+        deduped: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for item in candidates:
+            key = (item.get("layer", ""), item.get("reason", ""), str(item.get("id", "")))
+            previous = deduped.get(key)
+            if not previous or item.get("score", 0) > previous.get("score", 0):
+                deduped[key] = item
+        items = sorted(deduped.values(), key=lambda x: x.get("score", 0), reverse=True)[:limit]
+        return {
+            "total": len(items),
+            "rules": {"stale_days": stale_days, "low_confidence": low_confidence},
+            "items": items,
+        }
 
     # ── 会话生命周期 ──────────────────────────────────────────
 

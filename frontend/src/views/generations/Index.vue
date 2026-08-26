@@ -31,12 +31,44 @@
               <el-option value="rejected" :label="$t('generations.status_rejected')" />
             </el-select>
           </div>
+          <div class="filter-item">
+            <span class="filter-label">来源</span>
+            <el-select v-model="filterSource" placeholder="全部来源" size="small" clearable @change="onFilterChange">
+              <el-option value="analyzer" label="分析器" />
+              <el-option value="ai_chat" label="AI 助手" />
+              <el-option value="diff_evaluator" label="差异评估" />
+              <el-option value="data_factory" label="数据工厂" />
+            </el-select>
+          </div>
+          <div class="filter-item">
+            <span class="filter-label">Job</span>
+            <el-input v-model="filterJobId" size="small" clearable placeholder="job_id" @change="onFilterChange" @clear="onFilterChange" />
+          </div>
+          <div class="filter-item">
+            <span class="filter-label">目标</span>
+            <el-input v-model="filterTargetId" size="small" clearable placeholder="API/模板/巡检 ID" @change="onFilterChange" @clear="onFilterChange" />
+          </div>
+          <div class="filter-item">
+            <span class="filter-label">风险</span>
+            <el-select v-model="filterRisk" placeholder="全部风险" size="small" clearable @change="onFilterChange">
+              <el-option value="critical" label="critical" />
+              <el-option value="high" label="high" />
+              <el-option value="medium" label="medium" />
+              <el-option value="low" label="low" />
+            </el-select>
+          </div>
         </div>
       </div>
 
       <!-- 列表表格 -->
       <el-card v-loading="loading">
-        <el-table :data="items" stripe size="small" style="width:100%">
+        <div v-if="selectedRows.length" class="bulk-bar">
+          <span>{{ selectedRows.length }} 项已选择</span>
+          <el-button size="small" type="success" @click="batchAccept">批量采纳</el-button>
+          <el-button size="small" type="danger" @click="openBatchReject">批量拒绝</el-button>
+        </div>
+        <el-table :data="items" stripe size="small" style="width:100%" @selection-change="selectedRows = $event">
+          <el-table-column type="selection" width="42" :selectable="row => row.status === 'pending_review'" />
           <el-table-column :label="$t('generations.col_api_id')" width="200">
             <template #default="{ row }">
               <router-link v-if="row.api_id" :to="'/apis/' + row.api_id" class="mono link">
@@ -62,7 +94,17 @@
           </el-table-column>
           <el-table-column label="Job" width="130">
             <template #default="{ row }">
-              <span class="text-3 mono" style="font-size:11px">{{ row.job_id || '—' }}</span>
+              <button v-if="row.job_id" class="link-button mono" @click="filterByJob(row.job_id)">{{ row.job_id }}</button>
+              <span v-else class="text-3 mono" style="font-size:11px">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="目标" width="150">
+            <template #default="{ row }">
+              <div class="target-list">
+                <button v-for="tid in (row.target_ids || []).slice(0, 2)" :key="tid" class="link-button mono" @click="filterByTarget(tid)">{{ String(tid).slice(0, 10) }}</button>
+                <span v-if="(row.target_ids || []).length > 2" class="text-3">+{{ row.target_ids.length - 2 }}</span>
+                <span v-if="!(row.target_ids || []).length" class="text-3">—</span>
+              </div>
             </template>
           </el-table-column>
           <el-table-column :label="$t('generations.col_summary')" min-width="220">
@@ -177,6 +219,11 @@ const pageSize = 30
 const filterType = ref('')
 // 默认筛选"待审核"状态，方便审核人员快速定位待处理项
 const filterStatus = ref('pending_review')
+const filterSource = ref('')
+const filterJobId = ref('')
+const filterTargetId = ref('')
+const filterRisk = ref('')
+const selectedRows = ref([])
 
 // 预览弹窗
 const showPreview = ref(false)
@@ -186,6 +233,7 @@ const previewId = ref('')
 const showRejectDlg = ref(false)
 const rejectId = ref('')
 const rejectFeedback = ref('')
+const batchRejectMode = ref(false)
 
 // 类型标签颜色
 function typeTag(type) {
@@ -226,6 +274,10 @@ async function load() {
     }
     if (filterType.value) params.type = filterType.value
     if (filterStatus.value) params.status = filterStatus.value
+    if (filterSource.value) params.source = filterSource.value
+    if (filterJobId.value) params.job_id = filterJobId.value
+    if (filterTargetId.value) params.target_id = filterTargetId.value
+    if (filterRisk.value) params.risk = filterRisk.value
 
     const res = await generationApi.list(params)
     items.value = res.items || []
@@ -240,7 +292,18 @@ async function load() {
 // 筛选变更时重置分页并重新加载
 function onFilterChange() {
   page.value = 1
+  selectedRows.value = []
   load()
+}
+
+function filterByJob(jobId) {
+  filterJobId.value = jobId
+  onFilterChange()
+}
+
+function filterByTarget(targetId) {
+  filterTargetId.value = targetId
+  onFilterChange()
 }
 
 // 打开预览弹窗
@@ -287,18 +350,42 @@ async function doAccept(row) {
 function openReject(row) {
   rejectId.value = row.id
   rejectFeedback.value = ''
+  batchRejectMode.value = false
+  showRejectDlg.value = true
+}
+
+function openBatchReject() {
+  rejectId.value = ''
+  rejectFeedback.value = ''
+  batchRejectMode.value = true
   showRejectDlg.value = true
 }
 
 // 确认拒绝
 async function doReject() {
   try {
-    await generationApi.reject(rejectId.value, rejectFeedback.value)
+    if (batchRejectMode.value) {
+      await generationApi.batch(selectedRows.value.map(row => row.id), 'reject', rejectFeedback.value)
+    } else {
+      await generationApi.reject(rejectId.value, rejectFeedback.value)
+    }
     toast.success(t('generations.reject_success'))
     showRejectDlg.value = false
+    selectedRows.value = []
     await load()
   } catch (e) {
     toast.error(e.message || t('generations.reject_failed'))
+  }
+}
+
+async function batchAccept() {
+  try {
+    await generationApi.batch(selectedRows.value.map(row => row.id), 'accept')
+    toast.success(t('generations.accept_success'))
+    selectedRows.value = []
+    await load()
+  } catch (e) {
+    toast.error(e.message || t('generations.accept_failed'))
   }
 }
 
@@ -306,6 +393,10 @@ onMounted(() => {
   // 从 URL 查询参数恢复筛选条件（场景页面生成完成后的跳转）
   if (route.query.type) filterType.value = route.query.type
   if (route.query.status) filterStatus.value = route.query.status
+  if (route.query.source) filterSource.value = route.query.source
+  if (route.query.job_id) filterJobId.value = route.query.job_id
+  if (route.query.target_id) filterTargetId.value = route.query.target_id
+  if (route.query.risk) filterRisk.value = route.query.risk
   load()
 })
 
@@ -340,6 +431,35 @@ watch(() => projectStore.current, () => {
   text-transform: uppercase;
   letter-spacing: .05em;
   white-space: nowrap;
+}
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-size: 12px;
+}
+.link-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+}
+.link-button:hover {
+  text-decoration: underline;
+}
+.target-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .action-btns {
   display: flex;

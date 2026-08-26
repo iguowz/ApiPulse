@@ -97,6 +97,7 @@ class MockService(BaseModel):
     enabled: bool = True
     base_path: str = ""
     public_enabled: bool = False
+    access_key_enabled: bool = True
     access_key: str = ""
     source: MockServiceSource = MockServiceSource.MANUAL
     default_response: MockResponseConfig = Field(default_factory=MockResponseConfig)

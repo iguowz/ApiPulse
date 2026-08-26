@@ -247,8 +247,8 @@
                   <div class="dag-ctx-item" @click="dagAddLoopAfter">{{ $t('scenario_detail.dag_add_loop_after') }}</div>
                   <div class="dag-ctx-item dag-ctx-divider" />
                   <!-- 复制/粘贴步骤 -->
-                  <div class="dag-ctx-item" @click="dagCopyStep">{{ $t('scenario_detail.dag_copy_step') }}</div>
-                  <div class="dag-ctx-item" @click="dagPasteStep">{{ $t('scenario_detail.dag_paste_step') }}</div>
+                  <div class="dag-ctx-item" @click="() => dagCopyStep()">{{ $t('scenario_detail.dag_copy_step') }}</div>
+                  <div class="dag-ctx-item" @click="() => dagPasteStep()">{{ $t('scenario_detail.dag_paste_step') }}</div>
                   <div class="dag-ctx-item dag-ctx-divider" />
                   <div class="dag-ctx-item" style="color:var(--red)" @click="dagDeleteNode">{{ $t('scenario_detail.dag_context_delete') }}</div>
                   <div class="dag-ctx-item dag-ctx-divider" />
@@ -810,10 +810,10 @@
 
     <!-- StepEditor 对话框 -->
     <StepEditor
-      v-if="editingStepId"
+      v-if="editingStep"
       :visible="editorVisible"
-      :step="editingStep || {}"
-      :scenario-id="String(route.params.id)"
+      :step="editingStep"
+      :scenario-id="scenarioId"
       :api-list="apiList"
       :available-steps="availableDependencyIds"
       :extract-usage="extractUsage"
@@ -827,7 +827,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch, markRaw, nextTick } from 'vue'
-import type { ScenarioStepTree, ScenarioStep, StepType, StepExecState } from '@/types'
+import type { ScenarioDSL, ScenarioStepTree, ScenarioStep, StepType, StepExecState } from '@/types'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Close } from '@element-plus/icons-vue'
@@ -857,7 +857,24 @@ const route    = useRoute()
 const router   = useRouter()
 const toast    = useToastStore()
 const projectStore = useProjectStore()
-const scenario = ref({})
+const scenarioId = computed(() => {
+  const id = route.params.id
+  return String(Array.isArray(id) ? id[0] : id || '')
+})
+const scenario = ref<ScenarioDSL>({
+  id: '',
+  name: '',
+  description: '',
+  steps: [],
+  source_api_ids: [],
+  status: 'draft',
+  ai_generated: false,
+  created_at: '',
+  updated_at: '',
+  project_id: '',
+  tags: [],
+  owner: '',
+})
 // 树形步骤列表（前端编辑器内部使用，condition/loop 为容器节点，不含 start/end）
 const steps    = ref<ScenarioStepTree[]>([])
 // 撤销/重做：基于 steps 快照，最大 30 条历史记录
@@ -2553,7 +2570,7 @@ function locateIssue(issue: any) {
 async function validateScenarioRemote(showToast = true) {
   validating.value = true
   try {
-    const res = await scenarioApi.validate(route.params.id, {
+    const res = await scenarioApi.validate(scenarioId.value, {
       steps: flattenSteps(steps.value),
       name: scenario.value.name,
       description: scenario.value.description,
@@ -2643,7 +2660,7 @@ async function saveScenario() {
   try {
     // 保存前将树形步骤扁平化为后端兼容格式
     const flatSteps = flattenSteps(steps.value)
-    await scenarioApi.update(route.params.id, { steps: flatSteps, name: scenario.value.name, description: scenario.value.description, owner: scenario.value.owner || '' })
+    await scenarioApi.update(scenarioId.value, { steps: flatSteps, name: scenario.value.name, description: scenario.value.description, owner: scenario.value.owner || '' })
     toast.success(t('scenario_detail.saved'))
     // 保存成功后更新原始快照（以展平后的数据为基准），清除未保存标记
     originalSteps.value = JSON.parse(JSON.stringify(flatSteps))
@@ -2659,7 +2676,7 @@ async function saveScenario() {
 // 所有节点显式保留 type，loop 节点写入 loop 对象，子步骤通过 parent_id 表达容器归属
 // 每个步骤携带 parent_id 字段，用于从扁平数据还原多层嵌套结构
 // 首尾分别追加 Start/End 步骤，保持 DAG 完整性
-function flattenSteps(tree: ScenarioStepTree[], parentId?: string): ScenarioStep[] {
+function flattenSteps(tree: ScenarioStepTree[] = steps.value, parentId?: string): ScenarioStep[] {
   const result: any[] = []
 
   // 序列化 Start 步骤（step_id='start'，type='start'，仅保存 start_params）
@@ -2923,7 +2940,7 @@ async function runScenario() {
 
   try {
     // P0-2: run 端点现在异步返回 {exec_id}，立即拿到 exec_id 后建立 WS 订阅实时进度
-    const runRes = await scenarioApi.run(route.params.id)
+    const runRes = await scenarioApi.run(scenarioId.value)
     const execId = runRes.exec_id
     if (!execId) {
       // 兼容旧版同步返回（直接是 record）
@@ -3027,7 +3044,7 @@ const historyChartOption = computed(() => {
 async function loadScenarioStats() {
   statsLoading.value = true
   try {
-    scenarioStats.value = await scenarioApi.stats(route.params.id, 20)
+    scenarioStats.value = await scenarioApi.stats(scenarioId.value, 20)
   } catch { /* 静默失败，历史数据为可选 */ }
   finally { statsLoading.value = false }
 }
@@ -3035,7 +3052,7 @@ async function loadScenarioStats() {
 async function loadScenarioVersions() {
   versionsLoading.value = true
   try {
-    const res = await scenarioApi.versions(route.params.id, 50)
+    const res = await scenarioApi.versions(scenarioId.value, 50)
     scenarioVersions.value = res.items || []
   } catch (e) {
     toast.error(e.message || t('scenario_detail.load_versions_failed'))
@@ -3057,7 +3074,7 @@ async function restoreScenarioVersion(row) {
   }
   restoringVersion.value = true
   try {
-    await scenarioApi.restoreVersion(route.params.id, row.id)
+    await scenarioApi.restoreVersion(scenarioId.value, row.id)
     toast.success(t('scenario_detail.restore_version_done'))
     await load()
     await loadScenarioVersions()
@@ -3078,7 +3095,7 @@ watch(activeTab, tab => {
 
 async function load() {
   try {
-    const doc = await scenarioApi.get(route.params.id)
+    const doc = await scenarioApi.get(scenarioId.value)
     scenario.value = doc
     // 从扁平数组构建树形结构供前端编辑（同时提取 start/end 特殊步骤）
     steps.value    = unflattenSteps(doc.steps || [])

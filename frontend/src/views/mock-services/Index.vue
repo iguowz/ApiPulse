@@ -36,8 +36,8 @@
               <div class="text-3 mono service-url">{{ publicUrl(svc, false) }}</div>
               <div class="service-meta">
                 <el-tag size="small" type="info">{{ $t('mockServices.route_count', { count: svc.route_count || 0 }) }}</el-tag>
-                <el-tag v-if="svc.public_enabled" size="small" :type="svc.access_key ? 'warning' : 'danger'">
-                  {{ svc.access_key ? $t('mockServices.public_enabled') : $t('mockServices.public_without_key') }}
+                <el-tag v-if="svc.public_enabled" size="small" :type="isKeyEnabled(svc) ? 'warning' : 'success'">
+                  {{ isKeyEnabled(svc) ? $t('mockServices.public_with_key') : $t('mockServices.public_without_key') }}
                 </el-tag>
                 <el-tag v-if="svc.error_count" size="small" type="danger">{{ $t('mockServices.error_count', { count: svc.error_count }) }}</el-tag>
               </div>
@@ -70,7 +70,7 @@
               </div>
               <div>
                 <span class="kpi-label">{{ $t('mockServices.access_key') }}</span>
-                <span class="mono">{{ selectedService.access_key ? maskKey(selectedService.access_key) : $t('common.none') }}</span>
+                <span class="mono">{{ keyStatus(selectedService) }}</span>
               </div>
               <div>
                 <span class="kpi-label">{{ $t('mockServices.call_count') }}</span>
@@ -271,8 +271,9 @@
           <el-form-item :label="$t('common.enabled')"><el-switch v-model="serviceForm.enabled" /></el-form-item>
           <el-form-item :label="$t('mockServices.public_enabled')"><el-switch v-model="serviceForm.public_enabled" /></el-form-item>
         </div>
+        <el-form-item :label="$t('mockServices.access_key_enabled')"><el-switch v-model="serviceForm.access_key_enabled" /></el-form-item>
         <el-form-item :label="$t('mockServices.access_key')">
-          <el-input v-model="serviceForm.access_key" :placeholder="$t('mockServices.access_key_required')">
+          <el-input v-model="serviceForm.access_key" :disabled="!serviceForm.access_key_enabled" :placeholder="$t('mockServices.access_key_placeholder')">
             <template #append><el-button @click="serviceForm.access_key = randomKey()">{{ $t('mockServices.generate_key') }}</el-button></template>
           </el-input>
         </el-form-item>
@@ -510,7 +511,7 @@ const filteredRoutes = computed(() => {
 })
 
 function defaultServiceForm() {
-  return { name: '', slug: '', description: '', enabled: true, public_enabled: false, access_key: randomKey(), defaultResponseJson: '{\n  "status_code": 404,\n  "headers": {"content-type": "application/json"},\n  "body_type": "json",\n  "body": {"message": "mock route not matched"},\n  "latency_ms": 0\n}' }
+  return { name: '', slug: '', description: '', enabled: true, public_enabled: false, access_key_enabled: true, access_key: randomKey(), defaultResponseJson: '{\n  "status_code": 404,\n  "headers": {"content-type": "application/json"},\n  "body_type": "json",\n  "body": {"message": "mock route not matched"},\n  "latency_ms": 0\n}' }
 }
 function defaultRouteForm() {
   return { name: '', enabled: true, priority: 100, method: 'GET', path: '/', conditions: [], status_code: 200, latency_ms: 0, body_type: 'json', headersJson: '{"content-type":"application/json"}', bodyText: '{\n  "message": "mock response"\n}', body_template: '', responseCasesJson: '[]' }
@@ -536,6 +537,13 @@ function parseMaybeJson(text, bodyType = 'json') {
 function maskKey(key) {
   if (!key) return t('common.none')
   return `${key.slice(0, 6)}...${key.slice(-4)}`
+}
+function isKeyEnabled(svc) {
+  return !!(svc?.access_key_enabled ?? !!svc?.access_key)
+}
+function keyStatus(svc) {
+  if (!isKeyEnabled(svc)) return t('mockServices.access_key_disabled')
+  return svc?.access_key ? maskKey(svc.access_key) : t('common.none')
 }
 function publicUrl(svc, absolute = true) {
   const path = `/mock-api/${svc.slug}`
@@ -612,11 +620,11 @@ function openServiceDialog(svc = null) {
   serviceDialog.value = { visible: true, id: svc?.id || '' }
   serviceForm.value = svc ? {
     name: svc.name, slug: svc.slug, description: svc.description || '', enabled: !!svc.enabled, public_enabled: !!svc.public_enabled,
-    access_key: svc.access_key || randomKey(), defaultResponseJson: JSON.stringify(svc.default_response || parseJson(defaultServiceForm().defaultResponseJson), null, 2),
+    access_key_enabled: isKeyEnabled(svc), access_key: svc.access_key || randomKey(), defaultResponseJson: JSON.stringify(svc.default_response || parseJson(defaultServiceForm().defaultResponseJson), null, 2),
   } : defaultServiceForm()
 }
 async function saveService() {
-  if (serviceForm.value.public_enabled && !serviceForm.value.access_key) {
+  if (serviceForm.value.public_enabled && serviceForm.value.access_key_enabled && !serviceForm.value.access_key) {
     toast.error(t('mockServices.access_key_required'))
     return
   }
@@ -702,10 +710,11 @@ async function runTest() {
     let path = testForm.value.path.startsWith('/') ? testForm.value.path : `/${testForm.value.path}`
     const queryObj = parseJson(testForm.value.queryJson, {})
     const queryString = new URLSearchParams(queryObj).toString()
-    const mockKey = selectedService.value.access_key || ''
+    const mockKey = isKeyEnabled(selectedService.value) ? (selectedService.value.access_key || '') : ''
     const url = `${base}${path}${queryString ? `?${queryString}` : ''}`
 
-    const headers = { ...parseJson(testForm.value.headersJson, {}), 'X-Mock-Key': mockKey }
+    const headers = { ...parseJson(testForm.value.headersJson, {}) }
+    if (mockKey) headers['X-Mock-Key'] = mockKey
     const noBodyMethods = ['GET', 'HEAD']
     const body = !noBodyMethods.includes(testForm.value.method.toUpperCase()) && testForm.value.bodyText
       ? testForm.value.bodyText
@@ -744,9 +753,10 @@ async function copyCurl() {
   const path = testForm.value.path.startsWith('/') ? testForm.value.path : `/${testForm.value.path}`
   const queryObj = parseJson(testForm.value.queryJson, {})
   const queryString = new URLSearchParams(queryObj).toString()
-  const mockKey = selectedService.value.access_key || ''
+  const mockKey = isKeyEnabled(selectedService.value) ? (selectedService.value.access_key || '') : ''
   const url = `${base}${path}${queryString ? `?${queryString}` : ''}`
-  await copyText(`curl -X ${testForm.value.method} '${url}' -H 'X-Mock-Key: ${mockKey}' -d '${testForm.value.bodyText || ''}'`)
+  const keyHeader = mockKey ? ` -H 'X-Mock-Key: ${mockKey}'` : ''
+  await copyText(`curl -X ${testForm.value.method} '${url}'${keyHeader} -d '${testForm.value.bodyText || ''}'`)
   toast.success(t('factory.toast_copied'))
 }
 function openLogDetail(row) { logDialog.value = { visible: true, row } }
@@ -766,7 +776,7 @@ function previewTraffic(row) { previewDialog.value = { visible: true, title: t('
 async function openRouteFromApi(apiId) {
   const api = await apiApi.get(apiId)
   if (!selectedService.value) {
-    openServiceDialog({ name: api.name || 'API Mock', slug: '', description: api.doc?.summary || '', enabled: true, public_enabled: false, access_key: randomKey(), default_response: parseJson(defaultServiceForm().defaultResponseJson) })
+    openServiceDialog({ name: api.name || 'API Mock', slug: '', description: api.doc?.summary || '', enabled: true, public_enabled: false, access_key_enabled: true, access_key: randomKey(), default_response: parseJson(defaultServiceForm().defaultResponseJson) })
     toast.info(t('mockServices.create_service_first'))
     return
   }

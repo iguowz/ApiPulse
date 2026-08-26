@@ -33,6 +33,7 @@ from models.generation_version import GenerationVersion, GenerationType, Generat
 from services.ai_job_service import AiJobService
 from services.llm_config_service import resolve_llm_config
 from services.structured_output_service import StructuredOutputError, parse_structured_output
+from services.dependency_service import DependencyService
 from ai_analyzer.utils import safe_fire_and_forget
 
 AI_DLQ = "queue:ai_analyze:dlq"
@@ -151,6 +152,23 @@ _SCENARIO_USER = """\
 {apis_json}"""
 
 
+# P1 Gate1 语义自检：生成后回读校验场景质量（断言覆盖/依赖闭环/变量引用/字段存在）
+_SCENARIO_SELFCHECK_SYSTEM = """\
+你是场景评审专家。请对给定场景做语义质量问题检查，只输出纯 JSON：{"passed": true/false, "issues": ["..."]}。
+检查项：
+1. 依赖闭环：api 节点 depends_on 指向的步骤确实执行且能提供所引用的变量。
+2. 变量引用：extract 提取的变量与后续 {{step.var}} 引用一致（未引用未定义变量）。
+3. 断言覆盖：每个 api 节点有>=1条断言，关键字段有断言。
+4. 字段存在：断言/提取引用的响应字段在接口样本中真实存在（不强求，字段缺失提示）。
+5. 结构完整：start/end 数量正确，无重复 step_id。
+仅在确实存在明显问题时 passed=false。无问题则 passed=true 且 issues 为空数组。不要 markdown 围栏。"""
+
+_SCENARIO_SELFCHECK_USER = """\
+请评审以下场景：
+
+{scenario_json}\n\n（边界：接口未实现时不算场景问题；只评场景自身的结构与断言质量。）"""
+
+
 # P1-1: 数据模板 AI 增强 prompt
 _DATA_TEMPLATE_SYSTEM = """\
 你是测试数据工程师。你的任务是根据接口样本数据和现有字段配置，增强数据模板的字段生成规则，使其能生成更真实、更全面的测试数据（含边界值和异常值）。
@@ -209,6 +227,20 @@ _STEP_RECOMMEND_USER = """\
 根据以下接口的响应样本，推荐场景步骤的断言和提取规则：
 
 {api_json}"""
+
+
+def _safe_query_param_keys(qp: Any) -> list[str]:
+    """安全提取 query 参数名：dict 取键，list 取 name 字段，异常时返回空。"""
+    try:
+        if isinstance(qp, dict):
+            return [k for k in qp.keys() if isinstance(k, str)]
+        if isinstance(qp, list):
+            return [(
+                p.get("name") if isinstance(p, dict) else str(p)
+            ) for p in qp if p]
+    except Exception:
+        return []
+    return []
 
 
 def _safe_truncate_json(obj: Any, max_chars: int = 1500) -> Any:
@@ -375,7 +407,7 @@ class AiAnalyzerService:
                 context = {
                     "path": api.request.path,
                     "method": api.request.method,
-                    "query_params_keys": [p.get("name", "") for p in (api.request.query_params or [])],
+                    "query_params_keys": _safe_query_param_keys(api.request.query_params),
                     "response_body_keys": response_body_keys,
                     "summary": (api.doc.summary if api.doc else ""),
                 }
@@ -423,6 +455,9 @@ class AiAnalyzerService:
         input_tokens: int, output_tokens: int, prompt: str,
         api_ids: list[str] | None = None, project_id: str = "default",
         source: str = "analyzer", job_id: str = "",
+        quality_score: float = 0.0, confidence: float = 0.0,
+        risk_level: str = "medium", gate_results: dict | None = None,
+        dependency_hits: dict | None = None,
     ) -> str:
         """将 AI 生成内容保存为 GenerationVersion (status=pending_review)，并 WebSocket 广播通知"""
         gv = GenerationVersion(
@@ -441,6 +476,11 @@ class AiAnalyzerService:
             project_id=project_id,
             source=source,
             job_id=job_id,
+            quality_score=quality_score,
+            confidence=confidence,
+            risk_level=risk_level,
+            gate_results=gate_results or {},
+            dependency_hits=dependency_hits,
         )
         doc = gv.model_dump()
         doc.pop("id", None)  # 让 MongoDB 自动生成 _id，避免空字符串冲突
@@ -468,6 +508,105 @@ class AiAnalyzerService:
                 generation_ids=[gv_id],
             )
         return gv_id
+
+    async def _auto_review_generations(self, project_id: str, generation_ids: list[str], user_id: str = "") -> None:
+        """P1 Gate3 生成即试跑 + P0-D2 分级代审。
+
+        - 先对每个场景 GenerationVersion 试跑（写操作由 trial_runner 护栏拦截；仅中/低风险，省成本），
+          把 trial_run 证据写入，作为自动通过/人工审阅的依据。
+        - 再按 decide_auto_review 决策：低风险 + 高置信 + 试跑通过 → 自动 apply（默认 auto_review_enabled=False 关闭）。
+        """
+        from config.settings import get_settings
+        from bson import ObjectId
+        s = get_settings()
+        # P1 Gate3：生成即试跑（先自证，再判断是否够格自动通过）
+        if s.trial_run_enabled:
+            from services.trial_runner import trial_run_generation
+            for gid in generation_ids:
+                try:
+                    doc = await self._generation_col.find_one({"_id": ObjectId(gid)}, {"risk_level": 1, "trial_run": 1})
+                    if not doc:
+                        continue
+                    if doc.get("risk_level") not in ("low", "medium"):
+                        continue  # 高/关键风险直接人工，无需试跑
+                    if (doc.get("trial_run") or {}).get("passed"):
+                        continue  # 已试跑通过，无需重复
+                    await trial_run_generation(self, gid)
+                except Exception as te:
+                    logger.warning("Trial gen {} failed (non-blocking): {}", gid, te)
+        # P0-D2：自动通过决策
+        if not s.auto_review_enabled:
+            return
+        from services.quality_gate import decide_auto_review
+        for gid in generation_ids:
+            try:
+                doc = await self._generation_col.find_one({"_id": ObjectId(gid)})
+                if not doc:
+                    continue
+                if decide_auto_review(doc) != "auto_accept":
+                    continue
+                ok = await self.apply_version(gid, reviewer_id="system")
+                if ok:
+                    await self._broadcast("ai_analysis", {
+                        "type": "generation_applied", "generation_id": gid,
+                        "status": "applied", "auto_review": True, "project_id": project_id,
+                    })
+            except Exception as e:
+                logger.warning("Auto-review failed for {}: {}", gid, e)
+
+    async def _gate2_vote_scenario(self, scene: dict, apis_summary: list, gate1_result: dict) -> dict:
+        """P2 Gate2 一致性投票：用变体指令再做一次自检，按两次结论一致性给 pass_rate（0/0.5/1）。
+
+        仅在 quality_gate_vote 开启时生效（默认关，省成本）。"""
+        from config.settings import get_settings
+        s = get_settings()
+        if not (s.quality_gate_enabled and s.quality_gate_vote):
+            return {"pass_rate": 1.0, "agree": True}
+        n = max(1, int(s.quality_gate_vote_models or 2))
+        g1_ok = bool((gate1_result or {}).get("passed"))
+        agree = 1.0
+        decisive = 0
+        for _ in range(n):
+            g2 = await self._gate1_self_check_scenario(scene, apis_summary, variant="\n请从另一个角度严格复核，尤其关注依赖闭环与断言覆盖。") or {}
+            g2_ok = bool(g2.get("passed"))
+            if g1_ok == g2_ok:
+                decisive += 1
+        # 一致性：与 Gate1 一致的投票占比 -> pass_rate（0..1），全不一致取 0.5 中性
+        agree = decisive / n
+        return {"pass_rate": round(agree, 2), "agree": agree >= 0.5}
+
+    async def _gate1_self_check_scenario(self, scene: dict, apis_summary: list, variant: str = "") -> dict:
+        """P1 Gate1 语义自检：生成后回读校验场景质量（断言覆盖/依赖闭环/变量引用/字段存在）。
+
+        关闭或失败时返回空（不阻塞生成）；仅返回 {passed, issues}。
+        variant: 追加到 system 的复核指令，用于 Gate2 第二意见。
+        """
+        from config.settings import get_settings
+        s = get_settings()
+        if not (s.quality_gate_enabled and s.quality_gate_self_check) or not scene.get("steps"):
+            return {}
+        compact = {
+            "name": scene.get("name", ""),
+            "steps": [
+                {"step_id": st.get("step_id"), "type": st.get("type", "api"),
+                 "api_id": st.get("api_id", ""), "depends_on": st.get("depends_on", []),
+                 "extract": list((st.get("extract") or {}).keys()), "asserts": len(st.get("assertions") or [])}
+                for st in scene.get("steps", [])
+            ],
+            "api_count": len(apis_summary),
+        }
+        prompt = _SCENARIO_SELFCHECK_USER.format(scenario_json=json.dumps(compact, ensure_ascii=False))
+        try:
+            from ai_analyzer.utils import safe_parse_json
+            raw = await self._call_llm(prompt, _SCENARIO_SELFCHECK_SYSTEM + variant, max_tokens=600, task_type="scenario")
+            data = safe_parse_json(raw)
+            if not isinstance(data, dict):
+                return {"passed": False, "issues": ["self_check_non_object"]}
+            issues = data.get("issues") or []
+            return {"passed": bool(data.get("passed", False)), "issues": issues if isinstance(issues, list) else [str(issues)]}
+        except Exception as e:
+            logger.warning("Gate1 self-check failed (non-blocking): {}", e)
+            return {"passed": False, "issues": ["self_check_error"]}
 
     async def apply_version(
         self, generation_id: str, reviewer_id: str | None = None,
@@ -1595,6 +1734,21 @@ class AiAnalyzerService:
                 logger.warning("Scenario memory retrieval failed: {}", e)
         # else: knowledge 为 None 或 apis_summary 为空 → 静默跳过
 
+        # ── P0-A5 依赖发现 + 依赖上下文注入：基于已知接口依赖设计场景，避免 LLM 臆造 ──
+        dep_ctx = ""
+        dep_edges: list[dict] = []
+        if s.dependency_enabled:
+            dep_svc = DependencyService(self._db)
+            try:
+                await dep_svc.discover_static_edges(project_id, api_ids)
+                dep_ctx = await dep_svc.dependency_context(project_id, api_ids)
+                dep_edges = await dep_svc.build_graph(project_id)
+            except Exception as e:
+                # 依赖发现失败不阻塞场景生成（非关键路径）
+                logger.warning("Dependency discovery failed (non-blocking): {}", e)
+        # 边的 (上游, 下游) 集合，用于 dependency_hits 命中统计
+        edge_pairs = {(e.get("upstream_api_id"), e.get("downstream_api_id")) for e in dep_edges}
+
         # 场景生成输出较复杂（多场景+多步骤），max_tokens 从 settings 读取
         # 根据 scenario_type 构建类型特定的生成指令
         type_instruction = _build_scenario_type_instruction(scenario_type, len(apis_summary))
@@ -1605,7 +1759,7 @@ class AiAnalyzerService:
                 _SCENARIO_USER.format(
                     apis_json=json.dumps(apis_summary, ensure_ascii=False)
                 ),
-                self._build_system_prompt(_SCENARIO_SYSTEM + type_instruction, scenario_memory_ctx),
+                self._build_system_prompt(_SCENARIO_SYSTEM + type_instruction + ("\n\n" + dep_ctx if dep_ctx else ""), scenario_memory_ctx),
                 max_tokens=s.openai_max_tokens_scenario,
                 task_type="scenario",
             )
@@ -1656,6 +1810,32 @@ class AiAnalyzerService:
                     "steps": [step.model_dump() for step in steps],
                     "scenario_type": scenario_type,
                 }
+                # 依赖命中统计（证据包 & 质量评估用）：场景中 depend_on 关系是否与已知依赖边一致
+                step_api = {st.step_id: st.api_id for st in steps}
+                matched = sum(
+                    1 for st in steps if st.api_id
+                    for d in st.depends_on
+                    if step_api.get(d) and (step_api[d], st.api_id) in edge_pairs
+                )
+                dep_hits_scene = {
+                    "edge_count": len(edge_pairs),
+                    "matched_pairs": matched,
+                    "used_context": bool(dep_ctx),
+                }
+                # P0-D2 风险分级 + 软置信度（Gate1/Gate3 接入后由 quality_gate 加权增强）
+                from services.quality_gate import guess_risk_level
+                methods = {a["method"] for a in apis_summary}
+                risk = guess_risk_level([], sorted(methods))
+                # P1 Gate1 语义自检 + 质量门评分（Q2：把准确率从人工审核转为机器可测）
+                gate1_result = await self._gate1_self_check_scenario(s, apis_summary)
+                from services.quality_gate import score_gate_results
+                gate2_result = await self._gate2_vote_scenario(s, apis_summary, gate1_result)
+                gate_results = {
+                    "gate0": {"passed": not scenario_warnings},
+                    "gate1": gate1_result or {"passed": False, "issues": []},
+                    "gate2": gate2_result,  # P2 一致性投票（默认中性 pass_rate=1）
+                }
+                conf = round(score_gate_results(gate_results, risk)["confidence"], 3)
                 scenario_summary = f"场景: {scenario_content['name']} ({len(steps)} 步骤)"
                 gv_id = await self._save_generation_version(
                     api_id=api_ids[0] if api_ids else "",
@@ -1670,6 +1850,11 @@ class AiAnalyzerService:
                     api_ids=api_ids,
                     project_id=project_id,
                     job_id=job_id,
+                    dependency_hits=dep_hits_scene,
+                    quality_score=conf,
+                    confidence=conf,
+                    risk_level=risk,
+                    gate_results=gate_results,
                 )
                 gen_version_ids.append(gv_id)
                 logger.info("Scenario GenerationVersion saved: '{}' ({})", scenario_content["name"], gv_id)
@@ -2207,8 +2392,10 @@ class AiAnalyzerService:
         场景不再直接插入 scenarios 集合，改为保存为 GenerationVersion（status=pending_review）。
         """
         # 场景生成也限制并发（LLM 调用较慢，避免同时生成过多场景导致 API 限流）
-        scenario_sem = asyncio.Semaphore(2)
-        logger.info("AI scenario worker started (concurrency=2)")
+        # 并发数由 cluster_max_workers 控制（配置化，默认 2）
+        _max_par = max(1, get_settings().cluster_max_workers or 2)
+        scenario_sem = asyncio.Semaphore(_max_par)
+        logger.info("AI scenario worker started (concurrency={})", _max_par)
 
         async def process_one(task_raw: bytes | str):
             """信号量控制并发 + 异常捕获广播失败事件 + 重试/DLQ 机制"""
@@ -2240,10 +2427,16 @@ class AiAnalyzerService:
                         "api_ids": api_ids,
                         "status": "running",
                     })
-                    gen_version_ids = await asyncio.wait_for(
-                        self.generate_scenarios(api_ids, project_id, scenario_type, job_id=job_id),
-                        timeout=600,
-                    )
+                    # P0-C2 规模化：按依赖图连通分量分片，逐批生成，避免 100 上限且控制单次 LLM 输入
+                    from services.cluster_pipeline import ClusterPipeline
+                    batches = await ClusterPipeline(self._db).build_batches(project_id, api_ids) or [api_ids]
+                    gen_version_ids: list[str] = []
+                    for batch in batches:
+                        batch_ids = await asyncio.wait_for(
+                            self.generate_scenarios(batch, project_id, scenario_type, job_id=job_id),
+                            timeout=600,
+                        )
+                        gen_version_ids.extend(batch_ids)
                     # Phase 1: 广播场景生成版本 ID（待审核），不再广播实际场景 ID
                     # 修复 Bug 4b：仅在 gen_version_ids 非空时广播 pending_review，避免空版本广播
                     if gen_version_ids:
@@ -2274,6 +2467,8 @@ class AiAnalyzerService:
                             generation_ids=gen_version_ids,
                             user_id=user_id,
                         )
+                        # P0-D2 分级代审：满足条件自动通过（默认关闭；开启后低风险+高置信+试跑通过才自动 apply）
+                        await self._auto_review_generations(project_id, gen_version_ids, user_id=user_id)
                     else:
                         # gen_version_ids 为空时广播失败并标记 job 为 failed
                         logger.warning("Scenario generation produced no versions for api_ids={}", api_ids)
@@ -3050,6 +3245,8 @@ class AiAnalyzerService:
         effective_max_tokens = runtime.max_tokens if task_type else (max_tokens if max_tokens is not None else self._max_tokens)
         last_error = None
 
+        # P0: 推理型模型(如 Qwen3.8-9B-GGUF)关闭 thinking，使 JSON 落在 content
+        extra_body = {"chat_template_kwargs": {"enable_thinking": False}} if s.llm_disable_thinking else None
         for attempt in range(retries):
             try:
                 resp = await client.chat.completions.create(
@@ -3058,6 +3255,7 @@ class AiAnalyzerService:
                     temperature=temperature,
                     max_tokens=effective_max_tokens,
                     timeout=timeout,
+                    extra_body=extra_body,
                 )
                 # 防御：LLM 可能返回空 choices 数组，避免 IndexError
                 if not resp.choices:
@@ -3139,6 +3337,8 @@ class AiAnalyzerService:
                 user_prompt, system_prompt, max_tokens=max_tokens, retries=3, task_type=task_type
             )
 
+        # P0: 推理型模型关闭 thinking，避免内容落入 reasoning_content
+        extra_body = {"chat_template_kwargs": {"enable_thinking": False}} if get_settings().llm_disable_thinking else None
         try:
             # stream=True 返回 async iterator，逐 chunk 消费
             stream = await client.chat.completions.create(
@@ -3148,6 +3348,7 @@ class AiAnalyzerService:
                 max_tokens=effective_max_tokens,
                 timeout=timeout,
                 stream=True,
+                extra_body=extra_body,
             )
             async for chunk in stream:
                 # 防御：部分 chunk 可能无 choices（如首尾的 role/done 标记）

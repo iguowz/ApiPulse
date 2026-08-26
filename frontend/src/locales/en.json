@@ -241,6 +241,15 @@
     "ai_metric_tokens_each": "Avg Tokens / Generation",
     "ai_metric_total_tokens": "Total Tokens",
     "ai_metric_tokens_label": "Token Usage",
+    "ai_metric_auto_applied": "Auto-Applied",
+    "desc_ai_auto_applied": "Generations auto-accepted (low-risk + high-confidence + trial pass)",
+    "ai_kpi_auto_applied_sub": "{count} auto-accepted",
+    "ai_metric_trial_pass": "Trial Pass",
+    "desc_ai_trial_pass": "Scenario trial-run self-verification (passed / run)",
+    "ai_kpi_trial_sub": "trial pass rate {rate}",
+    "ai_metric_high_conf": "High Confidence",
+    "desc_ai_high_conf": "Generations with confidence >= threshold (0.7)",
+    "ai_kpi_high_conf_sub": "threshold {threshold}",
     "ai_metric_tokens_input": "In",
     "ai_metric_tokens_output": "Out",
     "ai_node_doc": "API Docs",
@@ -1179,10 +1188,13 @@
     "route_count": "{count} route(s)",
     "error_count": "{count} error(s)",
     "public_enabled": "Public",
+    "public_with_key": "Public with key",
     "public_without_key": "Public without key",
     "copy_url": "Copy URL",
     "slug": "Service Slug",
     "access_key": "Access Key",
+    "access_key_enabled": "Enable Access Key",
+    "access_key_disabled": "Key disabled",
     "access_key_placeholder": "Access key",
     "access_key_required": "Public access requires an access key",
     "generate_key": "Generate Key",
@@ -1706,13 +1718,17 @@
     "tabL2": "L2 Project Memory",
     "tabL3": "L3 Session Memory",
     "tabSearch": "Aggregated Search",
+    "tabCleanup": "Cleanup",
     "emptyL1": "No L1 long-term memory",
     "emptyL2": "No L2 project memory",
     "emptyL3": "No L3 session memory (only valid entries within 30 days)",
+    "emptyCleanup": "No cleanup candidates",
     "confirmDeleteL1": "Confirm delete this L1 memory?",
     "confirmDeleteL2": "Confirm delete this L2 memory?",
     "confirmDeleteL3": "Confirm delete this L3 session memory?",
+    "confirmDeleteCleanup": "Confirm delete this cleanup candidate?",
     "delete": "Delete",
+    "refreshCleanup": "Refresh",
     "noResults": "No matching memory found",
     "searchHint": "Enter a keyword and click Search to search across memory layers",
     "colKey": "Key",
@@ -1725,11 +1741,18 @@
     "colAction": "Action",
     "colTitle": "Title",
     "colType": "Type",
+    "colLayer": "Layer",
+    "colReason": "Reason",
+    "colScore": "Score",
     "colSessionId": "Session ID",
     "colSummary": "Summary",
     "colUser": "User",
     "colExpiresAt": "Expires",
     "totalItems": "{n} items",
+    "cleanup_low_confidence": "Low Confidence",
+    "cleanup_stale_unused": "Stale Unused",
+    "cleanup_duplicate_title": "Duplicate Title",
+    "cleanup_orphan_api_reference": "Orphan API Reference",
     "deleteFailed": "Delete failed",
     "loadFailed": "Load failed",
     "resultGroupL1": "L1 Long-term Memory ({n})",
@@ -1768,7 +1791,9 @@
     "confirmPassword": "Confirm Password",
     "role": "Role",
     "role_admin": "Admin",
-    "role_user": "User",
+    "role_editor": "Editor",
+    "role_viewer": "Viewer",
+    "role_monitor_admin": "Monitor Admin",
     "createdAt": "Registered",
     "admin_users": "User Management",
     "admin_users_desc": "Manage all registered users",
@@ -1999,6 +2024,11 @@
     "confirm_cancel": "Cancel",
     "write_success": "Operation completed",
     "write_failed": "Operation failed",
+    "proposal_pending": "Pending",
+    "proposal_running": "Running",
+    "proposal_executed": "Executed",
+    "proposal_cancelled": "Cancelled",
+    "proposal_failed": "Failed",
     "retrying": "Connection failed, retrying ({attempt}/{max})…",
     "error_max_retries": "Connection failed after multiple retries. Please check your network and try again."
   },
@@ -2036,10 +2066,11 @@
     "toc": "Table of Contents",
     "sections": {
       "intro": "1. Introduction",
-      "modules": "2. Feature Modules",
-      "scenarios": "3. Common Scenarios & Workflows",
-      "notes": "4. Additional Notes",
-      "examples": "5. Usage Examples"
+      "architecture": "2. System Architecture & Core Workflows",
+      "modules": "3. Feature Modules",
+      "scenarios": "4. Common Scenarios & Workflows",
+      "notes": "5. Additional Notes",
+      "examples": "6. Usage Examples"
     },
     "intro": {
       "p1": "ApiPulse is an all-in-one API quality assurance platform covering API asset management, AI-powered analysis, test scenario orchestration, mock services, data factory, health monitoring, and more—helping teams build efficient and reliable API testing systems.",
@@ -2053,26 +2084,39 @@
       ],
       "p2": "The platform uses projects for data isolation and supports multi-language (Chinese/English), dark/light theme switching, AI shortcuts (Cmd/Ctrl+K), and other convenience features."
     },
+    "architecture": {
+      "p1": "Using real HTTP traffic as the single source of truth, ApiPulse builds a closed loop of capture → analysis → test → monitoring; the diagrams below describe the system architecture and core workflows.",
+      "open": "Open interactive diagram",
+      "diagrams": [
+        { "file": "architecture", "title": "System Architecture", "desc": "Vue 3 SPA → FastAPI gateway (middleware + 30 routers) → services & engines (HAR parser / AI analysis / DAG execution / monitor scheduling / 4-tier memory) → MongoDB / Redis / MinIO, connected to LLM and multi-channel alerts." },
+        { "file": "workflow", "title": "End-to-End Workflow", "desc": "Import HAR / capture → streaming parse & dedupe to DB → push queue → AI generates docs / assertions / scenarios / monitor suggestions → review → DAG scenario execution → scheduled monitoring (DeepDiff compare) → multi-channel alerts → 4-tier memory." },
+        { "file": "sequence", "title": "Sequence: HAR Import → AI Generation", "desc": "Upload HAR → POST /api/har/upload → HarParserService streaming parse → write MongoDB & push Redis queue → AI Worker calls LLM to generate artifacts → write generation versions → WebSocket push to frontend." },
+        { "file": "dataflow", "title": "Data Flow: Capture → Analysis → Monitor → Alert", "desc": "HAR / capture → parse & dedupe → MongoDB DSL → Redis queue → AI artifacts (generation versions) → DAG execution records → scheduled monitoring → alert channels; 4-tier memory keeps accumulating during generation." }
+      ]
+    },
     "modules": {
       "dashboard": {
         "title": "Dashboard",
-        "desc": "Platform-wide status overview with key KPIs, execution trends, and test coverage heatmaps.",
-        "tabs": ["Overview: Core business KPI cards (total APIs, scenarios, executions, alerts)", "Workbench: Personal workspace with quick access to frequently used features"],
+        "desc": "Project-level overview for KPIs, AI task quality, execution trends, coverage gaps, and recent operations.",
+        "tabs": ["Overview: Core KPI cards (total APIs, scenarios, pass rate, alerts, SLA availability)", "Workbench: Pending API analysis, low-quality assets, AI outputs awaiting review, and quick actions"],
         "features": [
           "Project filtering: filter dashboard data by project, all metrics update in real time on project switch",
           "Coverage heatmap: display asset coverage matrix by module × dimension (scenarios/mocks/data factory/monitoring)",
-          "Execution trends: line chart showing recent execution success/failure trends"
+          "Execution trends: line charts for recent pass rate, failure volume, and response time changes",
+          "AI quality stats: generated outputs, pending reviews, task success rate, and queue status for spotting AI backlogs",
+          "Recent audit: key change events for tracing who changed APIs, scenarios, mocks, or settings"
         ]
       },
       "apis": {
         "title": "APIs",
         "desc": "Centralized API asset management with search, filtering, batch operations, and multi-format import.",
         "features": [
-          "Multiple import methods: Swagger/OpenAPI, Postman, HAR, mitmproxy live capture, cURL paste",
-          "Batch operations: batch delete, batch export, batch AI analysis",
+          "Multiple import methods: Swagger/OpenAPI, Postman, HAR, mitmproxy live capture, cURL paste, and manual creation",
+          "Batch operations: batch delete, OpenAPI JSON export, batch AI analysis/generation",
           "List view: displays API method, path, tags, project, quality score, last updated time",
           "Filter & search: search by method, path, tag, or project",
-          "Quick create: manually fill in request details to create a new API"
+          "Diff entry: re-importing an existing API creates a diff instead of a duplicate and keeps a change record",
+          "Project domain filtering: allow/block lists control which HAR or captured traffic enters the project catalog"
         ]
       },
       "apidetail": {
@@ -2081,12 +2125,12 @@
         "features": [
           "Request/response viewer: structured display of Headers, Query, Body (JSON/XML/Form)",
           "AI analysis: automatically analyze API structure and generate quality scores and improvement suggestions",
-          "Doc generation: AI-powered automatic API documentation generation",
-          "Assertion generation: auto-generate various assertion types (status code, response body, headers, etc.)",
+          "Doc generation: AI-generated summary, description, parameter tables, response fields, and tags, editable before saving",
+          "Assertion generation: auto-generate status code, JSONPath, header, response-time, type-match, and regex assertions",
           "Scenario generation: auto-generate multi-step test scenarios from the current API",
           "Direct request sender: built-in request sender with real-time response viewing",
           "Endpoint and parameter values auto-replaced with selected execution environment values",
-          "Auth config: supports None / Bearer Token / Basic Auth / API Key / OAuth 2.0 etc.; bindable to global environment variables",
+          "Auth config: supports None / Bearer Token / Basic Auth / API Key, bindable to environment variables",
           "Assertion editor: visual assertion editor supporting status code, response body JSONPath, response header, and response time assertions; each assertion includes an operator (equals/contains/regex/greater-than/less-than...) and expected value; AI one-click assertion recommendation",
           "Parameter references: reference upstream step extracted variables via {{step_N.response.body.path}} syntax; supports data factory template references {{factory.field}} and environment variables {{env.BASE_URL}}",
           "Database query references: configure SQL query steps in scenarios, with results referenced by subsequent steps via {{sql_step_N.rows[0].column}} syntax",
@@ -2098,11 +2142,14 @@
         "title": "Mock Services",
         "desc": "Standalone mock service management for simulating third-party or internal dependency responses.",
         "features": [
-          "Route rules: support path prefix/exact matching and HTTP method filtering",
-          "Response config: custom status codes, response headers, body (supports template variables)",
-          "Call logs: record request info, matched rules, and response content for each mock call",
+          "Route rules: exact paths, wildcard suffixes, path parameters, HTTP methods, and priorities",
+          "Response cases: multiple branches per route, matched by query/header/cookie/body/jsonpath/method/host conditions and priority",
+          "Response config: custom status codes, headers, and bodies with static, template, or mock_data sources",
+          "Template variables: use {{query.id}}, {{headers.authorization}}, {{body.user.id}}, {{sql.user.first.name}}, {{mock.id}}, {{timestamp}}, and related context values",
+          "SQL-backed responses: execute read-only SQL snippets in a response case and inject the result into templates",
+          "Call logs: request summary, matched route/case, SQL refs, final response, duration, with sensitive fields masked",
           "Latency simulation: configurable response delay to simulate network conditions",
-          "Multi-environment: each mock service has an independent URL, supports multiple versions running in parallel"
+          "Access control: public access, access key, default response, independent slug, traffic sources, proxy rules, replay-to-route drafts"
         ]
       },
       "scenarios": {
@@ -2111,10 +2158,11 @@
         "features": [
           "Scenario list: displays scenario name, project, tags, step count, last execution status",
           "DAG visual orchestration: drag-and-drop step orchestration with visual parameter passing and dependency display",
-          "Step editing: supports API calls, mock requests, data factory references, assertions, and more step types",
+          "Step editing: API calls, mock requests, waits, branches, loops, data factory references, assertions, extraction, pre/post SQL, and scripts",
           "Batch execution: supports parallel/serial execution strategies for steps within a scenario",
           "Execution tracking: real-time progress, step-level input/output, and assertion results",
-          "Data references: pass response data or data-factory-generated data between steps via variable references"
+          "Data references: pass response data, environment variables, generated factory data, and SQL query results between steps",
+          "AI generation: single/multi/complex strategies generate candidate scenarios from one or more APIs for review"
         ]
       },
       "factory": {
@@ -2123,9 +2171,11 @@
         "features": [
           "Data templates: define data structure with configurable generation rules per field",
           "Field editor: visually edit field name, type, and generation rules",
-          "Faker methods: 50+ built-in Faker methods (name, address, email, phone, date, etc.)",
-          "Dataset management: batch preview, export, and import of generated data",
-          "Template references: scenarios can directly reference data templates for runtime data generation"
+          "Faker methods: 80+ built-in generators (name, address, email, phone, date, UUID, etc.) with zh/en data",
+          "Negative data: null_rate, empty_rate, and invalid_rate per field for boundary and negative tests",
+          "Dataset management: batch preview, generation, export, and import",
+          "Template references: scenarios can use project-wide or API-specific templates for runtime data generation",
+          "AI enhancement: generate data templates from API docs/response fields and accept them through Review Center"
         ]
       },
       "executions": {
@@ -2144,20 +2194,24 @@
         "desc": "Scheduled health check monitoring with automatic API polling and multi-channel alerting on anomalies.",
         "features": [
           "Monitor tasks: define monitoring targets (scenario/API), execution frequency (cron expression), timeout",
-          "Scheduled execution: cron-based automatic triggering with manual on-demand execution",
+          "Scheduled execution: cron and interval scheduling with manual on-demand execution",
           "Alert management: view alert records, details, and recovery times",
           "Multi-channel notification: DingTalk bot, WeCom, Slack Webhook, custom webhook",
-          "Health trends: display API availability and response time trends over time periods"
+          "Health trends: display API availability and response time trends over time periods",
+          "AI-generated monitors: generate reviewable monitor suggestions from coverage gaps, risk preference, and schedule preference",
+          "Database and SQL support: monitor targets can use database services and SQL snippets as step data or validation evidence"
         ]
       },
       "generations": {
         "title": "Review Center",
         "desc": "Centralized review for AI-generated content—accept, partially accept, or discard AI outputs.",
         "features": [
-          "Generation list: view all AI outputs by type (doc/assertion/scenario/evaluation)",
+          "Generation list: view AI outputs by type (doc/assertion/scenario/data template/monitor/chat suggestion)",
           "Review actions: accept (replace existing), partially accept (merge selected items), discard",
           "Batch review: support batch approve or reject AI-generated results",
-          "Diff preview: preview the difference between old and new content before accepting"
+          "Diff preview: field-level diff between current and generated content before accepting",
+          "Version tracking: reviewer, status, accepted time, and generated content for AI output history",
+          "Memory feedback: review decisions can be recorded as project memory for future doc/assertion/scenario generation"
         ]
       },
       "importdiffs": {
@@ -2180,7 +2234,8 @@
           "L3 Session (MongoDB, 30d TTL): Auto-archived on AI chat completion, ReMe LLM generates structured summaries, upsert by session ID",
           "L4 Context (Redis, 24h TTL): Real-time multi-turn conversation context for AI Chat, SSE streaming",
           "Semantic Search (ReMe): Cross-layer vector search matching queries to the most relevant entries across L1/L2/L3",
-          "Auto-archiving: SSE completion event triggers L3 archival after each chat; prefers ReMe LLM summary with graceful fallback to first user message"
+          "Auto-archiving: SSE completion event triggers L3 archival after each chat; prefers ReMe LLM summary with graceful fallback to first user message",
+          "Knowledge types: field patterns, assertion patterns, doc patterns, scenario patterns, and reusable conventions for AI assistant and analysis tasks"
         ]
       },
       "coverage": {
@@ -2197,12 +2252,13 @@
         "title": "Settings",
         "desc": "Platform-wide configuration page with multiple functional tabs.",
         "features": [
-          "LLM Config: configure AI model provider, API key, model name, and parameters",
-          "AI Tasks: manage AI-related background async tasks (analysis, generation, diagnosis, etc.)",
-          "Prompt Management: customize AI prompt templates per task type",
+          "LLM Config: OpenAI / DeepSeek / Ollama / LM Studio / custom OpenAI-compatible services, with per-task model routing",
+          "AI Tasks: manage async AI jobs for analysis, docs, assertions, scenarios, data templates, monitors, diagnosis, etc.",
+          "Prompt Management: versioned prompt templates for doc/asserts/scenario/data_template/monitor/diff_eval/diagnose/extract/alert tasks",
           "Dead Letter Queue: view and manage failed messages/tasks",
           "Environments: manage multiple execution environments (dev/test/staging/prod), configure base URLs, variables, etc.",
-          "General: platform-wide preference settings",
+          "Database Services: PostgreSQL / MySQL / SQLite read-only sources and SQL snippets for scenarios, monitors, and mocks",
+          "General: language, AI review flow, auto-trigger downstream AI after acceptance, navigation auto-collapse",
           "Projects: create, edit, delete projects, configure domain allow/block list filtering",
           "Alert Channels: manage DingTalk/WeCom/Slack/Webhook notification channels"
         ]
@@ -2223,9 +2279,11 @@
         "desc": "System user management page, accessible only to admin role users. Supports user creation, editing, deletion, and role assignment.",
         "features": [
           "User list: displays username, email, role, creation time, last login time",
-          "Role management: supports Admin and User roles; Admin has full permissions",
-          "Create/edit users: admin can create new users or edit existing user info (username, email, password, role)",
-          "Delete/disable: supports deleting or disabling user accounts; disabled users cannot log in"
+          "Role management: backend RBAC supports admin, editor, viewer, and monitor_admin; admin has full permissions and cross-project access",
+          "Project ownership: non-admin users are isolated by project_id and can only access resources in their own project",
+          "Create/edit users: admins can create users and edit username, password, role, display name, and project",
+          "Delete/disable: disabled users cannot log in",
+          "Machine access: global X-API-Key is accepted for integrations and is treated as admin-level service access"
         ]
       }
     },
@@ -2237,42 +2295,95 @@
           "title": "From Traffic Capture to API Analysis",
           "background": "Use mitmproxy to capture client network traffic, or export HAR files from the browser, to quickly import external requests as API assets and leverage AI for deep analysis.",
           "flow": "mitmproxy live capture / browser HAR export → paste into API import → system auto-parses and creates API assets → go to API detail → click AI analyze → get quality scores and suggestions → generate assertions and API docs",
+          "steps": [
+            "Confirm the active project and its domain allow/block list in Settings → Projects to avoid importing static resources or unrelated domains.",
+            "For browser flows, export HAR from DevTools Network; for mobile/desktop apps, use mitmproxy live capture with the provided addon command.",
+            "Go to APIs and import via HAR/mitmproxy/cURL; the system parses request, response, headers, query, and body, then deduplicates by signature.",
+            "New APIs appear in the list directly; existing APIs create diff records, which should be reviewed in Diff Comparison before syncing.",
+            "Open the API detail page, trigger or wait for AI analysis, then inspect quality score, docs, assertions, and suggestions.",
+            "Accept AI-generated docs/assertions in Review Center before using the API in scenarios or monitors."
+          ],
           "tips": ["mitmproxy is ideal for live capture of mobile/web requests; HAR is suitable for batch browser traffic import", "Import auto-deduplicates; existing APIs go to diff comparison instead of duplicate creation"]
         },
         {
           "title": "Create and Execute Test Scenarios",
           "background": "Orchestrate multiple APIs into test scenarios following business flows, set up parameter passing and assertions, and execute with one click.",
           "flow": "Go to Scenarios → create new → set name and tags → add steps in DAG orchestrator (API call/assertion/delay etc.) → configure parameter passing between steps → save → click execute → view real-time progress and step-level results",
+          "steps": [
+            "Create a scenario with name, project, tags, and description, or generate one from API Detail / Scenarios with AI.",
+            "Add API steps on the DAG canvas and configure headers, query, body, auth, and environment overrides.",
+            "Extract variables in upstream steps via JSONPath, XPath, or Regex; use {{step_1.response.body.data.id}} in downstream steps.",
+            "Add assertions for status code, business code, core fields, array length, and response time.",
+            "Use data factory templates for test data and pre_sql/post_sql or SQL steps for database validation.",
+            "Save, choose an execution environment, and run; execution detail shows request, response, assertions, and AI diagnosis per step."
+          ],
           "tips": ["Select the execution environment at the bottom before running", "Drag step nodes to adjust execution order", "Reference upstream data with {{step_X.response.body.field}} syntax"]
         },
         {
           "title": "Generate Test Data with Data Factory",
           "background": "When test scenarios require diverse test data, use the data factory to batch-generate realistic datasets.",
           "flow": "Go to Data Factory → create new template → define fields (name/email/phone/date etc.) → select Faker method per field → preview generated data → save template → reference template in scenario steps → data auto-generated at runtime",
+          "steps": [
+            "Create a project-wide template or an API-specific template in Data Factory.",
+            "Choose fixed value, Faker method, or regex generation per field; configure null_rate, empty_rate, and invalid_rate when needed.",
+            "Generate a preview and verify field types, value ranges, locale, and negative-data ratios.",
+            "Save the template and reference it via {{factory.template_name.field}} or the data-template UI in a scenario step.",
+            "At runtime, scenarios generate fresh data from the template instead of sharing static fixtures."
+          ],
           "tips": ["Supports batch generation (1-1000 records), exportable as JSON/CSV", "Fields support three modes: fixed value, Faker method, and regex pattern"]
         },
         {
           "title": "Scheduled Health Monitoring",
           "background": "Set up scheduled monitoring tasks for critical APIs or scenarios to automatically check health status and alert on anomalies.",
           "flow": "Ensure target API/scenario is ready → go to Monitor → create new task → select target (scenario/API) → set cron frequency → configure alert channels → enable task → system runs on schedule → auto-send alerts on anomalies",
+          "steps": [
+            "Confirm the target API or scenario runs successfully in the intended environment and has key assertions.",
+            "Configure DingTalk, WeCom, Slack, or custom Webhook channels in Settings → Alert Channels.",
+            "Create a monitor task, select target type, schedule, timeout, and alert policy.",
+            "Optionally use AI-generated monitors based on coverage gaps, risk preference, and schedule preference, then accept suggestions in Review Center.",
+            "When enabled, scheduled failures are written to execution history and alert records, then pushed to configured channels.",
+            "From an alert, open execution detail to inspect failed steps, assertion diffs, and AI diagnosis before validating the recovery."
+          ],
           "tips": ["Cron expressions use five-field format (min hour day month weekday)", "Alert channels must be configured in Settings first", "Real-time alert notifications via WebSocket"]
         },
         {
           "title": "AI-Assisted Full Workflow",
           "background": "Leverage AI throughout the entire workflow from API import to scenario execution for efficiency gains.",
           "flow": "Import API → AI analyzes structure and quality → AI generates assertions → AI generates API docs → AI generates test scenarios → review AI output in Review Center → accept content → execute scenarios → AI auto-diagnoses on failure",
+          "steps": [
+            "First configure OpenAI, DeepSeek, Ollama, LM Studio, or a custom OpenAI-compatible service in Settings → LLM Config and test the connection.",
+            "After API import, AI creates docs, assertions, and quality suggestions; job status is visible in Settings → AI Tasks & Queues.",
+            "Important AI outputs enter Review Center, where docs, assertions, scenarios, data templates, and monitors can be accepted, partially accepted, or discarded.",
+            "Accepted outputs are written back to API DSL, scenarios, or monitors; review feedback can become project memory for better future generation.",
+            "On execution failure, inspect AI diagnosis in execution detail or open the global AI assistant with Cmd/Ctrl+K for page-aware explanation."
+          ],
           "tips": ["AI-generated content requires human review; the Review Center provides a unified review entry point", "Use Cmd/Ctrl+K anywhere to invoke the AI assistant"]
         },
         {
           "title": "Mock Third-Party Dependencies",
           "background": "When the system under test depends on third-party services that are not yet available, use Mock services to simulate their responses.",
           "flow": "Go to Mock Services → create new service → add route rules (path, HTTP method) → configure response template (status, body, headers) → enable service → get mock URL → use mock URL in scenario steps or direct requests instead of real endpoints",
-          "tips": ["Mock responses support template variables that can reference request parameters for dynamic responses", "Call logs help debug whether mock rules are matching as expected"]
+          "steps": [
+            "Create a mock service with name, slug, default response, public-access setting, and access key.",
+            "Add routes with method, path, priority, and base response; paths support exact matching, wildcard suffixes, and path parameters.",
+            "For multiple responses on one route, edit response cases and match VIP/error/empty-data branches by query/header/body/jsonpath conditions.",
+            "Templates can use {{query.id}}, {{headers.authorization}}, {{body.user.id}}, {{sql.user.first.name}}, {{mock.id}}, and {{timestamp}}.",
+            "For stateful responses, attach read-only SQL queries to a response case or generate a default case from API docs.",
+            "Use manual execute or copied curl to verify match trace, then put the mock URL into scenario steps or environment variables."
+          ],
+          "tips": ["Mock responses support variables from request parameters, SQL queries, and mock_data", "Call logs help debug whether mock rules are matching as expected"]
         },
         {
           "title": "Diff Comparison & API Sync",
           "background": "When existing APIs are re-imported (e.g., HAR/Swagger updates), use the diff comparison feature to compare old and new versions and selectively sync changes.",
           "flow": "Import HAR/Swagger etc. → system detects existing APIs → enter Diff Comparison page → view side-by-side field-level comparison (additions/deletions/modifications highlighted) → decide per field to accept or keep → submit sync → API assets updated per decisions",
+          "steps": [
+            "Re-import HAR, Swagger/OpenAPI, or another source; the system matches existing assets by API signature.",
+            "Changed fields create diff records for headers, query, body, response fields, and docs with added/deleted/modified highlights.",
+            "Open Diff Comparison, prioritize high-severity changes, and decide per field to accept the new version, keep old, or ignore.",
+            "After submission, API DSL updates according to your decisions while the diff record keeps status and history.",
+            "For risky changes, rerun AI analysis and check whether assertions, scenarios, and monitors need updates."
+          ],
           "tips": [
             "Diff Comparison page groups by API; each API has independent decisions",
             "Support 'Accept All' for quick full sync, 'Discard All' to keep current versions",
@@ -2283,10 +2394,50 @@
           "title": "Cross-Environment API Regression Testing",
           "background": "Run the same test scenario across multiple execution environments (dev/test/staging/prod) and compare results to identify environment-specific differences or regressions.",
           "flow": "Ensure all environments configured in Settings → go to Scenarios → select a scenario → switch target environment → execute separately → go to Execution History → compare two execution results → identify environment differences or regressions → fix and re-validate",
+          "steps": [
+            "Configure dev/test/staging/prod in Settings → Environments with Base URL and variables such as TOKEN, TENANT_ID, API_KEY.",
+            "Use {{env.VAR}} in scenario URLs, headers, and bodies so addresses and secrets are not hardcoded.",
+            "Run the same scenario in each environment; execution records keep environment, trigger, duration, and response snapshots.",
+            "Compare response structure, business fields, assertions, and latency across environments in execution detail/history.",
+            "Add stable regression scenarios to monitor tasks for scheduled cross-environment validation."
+          ],
           "tips": [
             "Execution environments are pre-configured in Settings → Environments with Base URLs and variables",
             "After executing the same scenario across environments, use 'Result Comparison' in Execution History for step-by-step diff",
             "Add regression scenarios to Monitor tasks for scheduled automated regression testing"
+          ]
+        },
+        {
+          "title": "SQL Data Source Validation",
+          "background": "Use read-only database services and SQL snippets when API responses must match database state, or when mocks/scenarios need dynamic database-backed data.",
+          "flow": "Settings → Database Services → create PostgreSQL/MySQL/SQLite source → create and test SQL snippet → use it in scenario pre_sql/post_sql or mock response cases → assert API responses against SQL results",
+          "steps": [
+            "Create a database service with connection info, timeout, and max rows; only read-only SELECT statements are allowed.",
+            "Create a SQL snippet and test it with params JSON, e.g. {\"user_id\":\"{{step_1.response.body.data.id}}\"}.",
+            "Use pre_sql to fetch request data before a step, or post_sql to validate persistence after a response.",
+            "Reference results with {{sql_step_2.rows[0].column}} in later steps or assertions.",
+            "In mock response cases, configure sql_queries and inject results through variables like {{sql.user.first.name}}."
+          ],
+          "tips": [
+            "SQLite production file access is restricted, and database passwords are encrypted",
+            "Keep SQL result sets small to avoid bloating execution context",
+            "Database validation is useful for order status, inventory, permissions, and other backend-state checks"
+          ]
+        },
+        {
+          "title": "Collaborate with AI Assistant",
+          "background": "The global AI assistant understands the current page context and can query assets, generate suggestions, explain failures, or perform confirmed write operations.",
+          "flow": "Press Cmd/Ctrl+K anywhere → ask a question or give a concrete task → AI searches current project APIs/scenarios/monitors/knowledge → write actions require confirmation → generated outputs go to Review Center or controlled tools → chat is archived as session memory",
+          "steps": [
+            "Make sure LLM config is available and configure model routes / prompt versions if needed.",
+            "Open the assistant from API, scenario, execution, mock, or knowledge pages; page type and project context are included.",
+            "Ask questions like “what assertions are missing?”, “find recently failed monitors”, or “generate a login scenario from these APIs”.",
+            "Create/update/delete actions use confirmation; generated content usually waits for human acceptance in Review Center.",
+            "After the conversation, the summary is archived into L3 session memory for future retrieval."
+          ],
+          "tips": [
+            "Specific prompts with API names, paths, scenario names, or execution IDs lead to better tool selection",
+            "Use AI for analysis and batch suggestions, and keep critical asset changes behind review"
           ]
         }
       ]
@@ -2321,23 +2472,26 @@
         },
         {
           "title": "Authentication Configuration Examples",
-          "desc": "Configure authentication in the 'Auth' tab of the API detail page, supporting multiple mainstream auth types.",
+          "desc": "Configure auth in API or scenario-step Auth tabs. Supported modes are Bearer Token, Basic Auth, API Key, and None.",
           "samples": [
             { "label": "Bearer Token", "code": "Type: Bearer Token → Token: {{env.API_TOKEN}} or enter token value directly" },
             { "label": "Basic Auth", "code": "Type: Basic Auth → Username: admin → Password: {{env.BASIC_PASS}}" },
             { "label": "API Key", "code": "Type: API Key → Key: X-API-Key → Value: {{env.API_KEY}} → Location: Header" },
-            { "label": "OAuth 2.0", "code": "Type: OAuth 2.0 → Grant Type: Client Credentials → Token URL: {{env.AUTH_URL}}/token → Client ID: {{env.CLIENT_ID}}" },
+            { "label": "Query API Key", "code": "Type: API Key → Key: access_token → Value: {{env.ACCESS_TOKEN}} → Location: Query" },
             { "label": "No Auth", "code": "Type: None → No authentication information attached" }
           ]
         },
         {
           "title": "Mock Response Template Examples",
-          "desc": "Mock service response bodies support template variables, which can reference request parameters to dynamically generate response content.",
+          "desc": "Mock service response bodies support double-curly template variables for query, headers, body, path params, SQL results, mock_data fields, and timestamps.",
           "samples": [
-            { "label": "Reference request path parameter", "code": "{\"user_id\": {{request.params.userId}}, \"name\": \"mock_user_{{request.params.userId}}\"}" },
-            { "label": "Reference request body field", "code": "{\"echo\": {{request.body.message}}, \"timestamp\": {{request.body.ts}}" },
+            { "label": "Reference query parameter", "code": "{\"user_id\": \"{{query.id}}\", \"name\": \"mock_user_{{query.id}}\"}" },
+            { "label": "Reference path parameter", "code": "{\"user_id\": \"{{path_params.userId}}\", \"path\": \"{{path}}\"}" },
+            { "label": "Reference request body field", "code": "{\"echo\": \"{{body.message}}\", \"timestamp\": \"{{timestamp}}\"}" },
+            { "label": "Reference request header", "code": "{\"token\": \"{{headers.authorization}}\", \"method\": \"{{method}}\"}" },
+            { "label": "Reference SQL result", "code": "{\"name\": \"{{sql.user.first.name}}\", \"level\": \"{{sql.user.first.level}}\"}" },
             { "label": "Fixed JSON response", "code": "{\"code\": 0, \"message\": \"success\", \"data\": {\"id\": 1, \"name\": \"test\"}}" },
-            { "label": "Random data response", "code": "{\"code\": 0, \"data\": {\"order_no\": \"ORD{{$randomInt(1000,9999)}}\", \"time\": \"{{$isoTimestamp}}\"}}" }
+            { "label": "Reference mock_data field", "code": "{\"code\": 0, \"mock_id\": \"{{mock.id}}\", \"time\": \"{{timestamp}}\"}" }
           ]
         },
         {
@@ -2363,6 +2517,38 @@
             { "label": "Every Monday at 2:00 AM", "code": "0 2 * * 1" },
             { "label": "1st of each month at 10:00 AM", "code": "0 10 1 * *" }
           ]
+        },
+        {
+          "title": "SQL Snippet and Reference Examples",
+          "desc": "SQL data sources provide read-only queries for scenarios, monitors, and mocks. SQL params can reference step context, and query results can be reused later.",
+          "samples": [
+            { "label": "SQL snippet", "code": "select id, status, total_amount from orders where id = :order_id limit 1" },
+            { "label": "Params JSON", "code": "{\"order_id\": \"{{step_1.response.body.data.order_id}}\"}" },
+            { "label": "Reference first-row field", "code": "{{sql_step_2.rows[0].status}}" },
+            { "label": "Mock template with SQL", "code": "{\"order_id\":\"{{sql.order.first.id}}\",\"status\":\"{{sql.order.first.status}}\"}" },
+            { "label": "Assertion", "code": "Type: JSONPath → Expression: $.data.status → Operator: equals → Expected: {{sql_step_2.rows[0].status}}" }
+          ]
+        },
+        {
+          "title": "AI Assistant Prompt Examples",
+          "desc": "The AI assistant can use the current page context to search and operate platform assets. Write actions usually require confirmation; generated outputs go to Review Center.",
+          "samples": [
+            { "label": "Analyze API quality", "code": "What docs, assertions, and scenario coverage are missing for this API? Rank suggestions by risk." },
+            { "label": "Generate assertion suggestions", "code": "Based on the current API response sample, generate status code, business code, core field, and response-time assertions." },
+            { "label": "Investigate failed execution", "code": "Explain the likely root cause of this failed execution and whether I should check env variables, request params, or backend response." },
+            { "label": "Batch monitor generation", "code": "Generate low-noise monitor suggestions for core APIs without monitor coverage, prioritizing login and order flows." },
+            { "label": "Capture knowledge", "code": "Turn this API's pagination response fields and assertion pattern into project knowledge for future generation." }
+          ]
+        },
+        {
+          "title": "Import and Export Examples",
+          "desc": "API assets can be imported from cURL, HAR, OpenAPI, and other sources, then exported as OpenAPI JSON for development, gateway, or documentation systems.",
+          "samples": [
+            { "label": "cURL import", "code": "curl -X POST \"{{env.BASE_URL}}/api/orders\" -H \"Authorization: Bearer {{env.API_TOKEN}}\" -H \"Content-Type: application/json\" -d '{\"sku\":\"SKU-1\",\"count\":1}'" },
+            { "label": "HAR import source", "code": "Chrome DevTools → Network → Export HAR → import from APIs page" },
+            { "label": "OpenAPI export use case", "code": "API list → batch select → export OpenAPI JSON → hand off to gateway/dev/docs systems" },
+            { "label": "Diff sync", "code": "Re-import same path and method → Diff Comparison → accept/keep fields → sync API DSL" }
+          ]
         }
       ]
     },
@@ -2385,7 +2571,7 @@
       },
       "roles": {
         "title": "Roles & Permissions",
-        "desc": "The platform has two built-in roles: Admin and User. Admin has full permissions including user management, system settings, project management, and other sensitive operations. User can perform daily business operations (API management, scenario execution, mock configuration, etc.) but cannot access user management and certain system settings. Newly registered users default to the User role and require an Admin to upgrade permissions in User Management."
+        "desc": "Backend RBAC includes admin, editor, viewer, and monitor_admin. Admin has full permissions and cross-project access; editor can manage business assets such as APIs, scenarios, monitors, data factory, mocks, environments, and knowledge; monitor_admin focuses on monitor and alert operations; viewer is mostly read-only. Non-admin users are isolated by project_id. Self-registration defaults to viewer, and sensitive roles must be assigned by an admin."
       }
     }
   },

@@ -131,6 +131,7 @@ import { useI18n } from 'vue-i18n'
 import { executionApi, apiApi, scenarioApi } from '@/api'
 import { useProjectStore, useToastStore } from '@/stores'
 import { fmt } from '@/utils'
+import type { ExecutionRecord } from '@/types'
 import AppPagination from '@/components/AppPagination.vue'
 import ResultTag from '@/components/ResultTag.vue'
 
@@ -138,7 +139,7 @@ const router = useRouter()
 const { t } = useI18n()
 const toast = useToastStore()
 const projectStore = useProjectStore()
-const items    = ref([])
+const items    = ref<ExecutionRecord[]>([])
 const total    = ref(0)
 const loading  = ref(false)
 const page     = ref(1)
@@ -152,7 +153,7 @@ const anyFilter = computed(() => filter.value.type || filter.value.trigger || fi
 async function load() {
   loading.value = true
   try {
-    const params = {
+    const params: Record<string, any> = {
       project_id: projectStore.current,
       skip: (page.value - 1) * pageSize,
       limit: pageSize,
@@ -223,7 +224,7 @@ const exporting = ref(false)
 async function exportCsv() {
   exporting.value = true
   try {
-    const params = { project_id: projectStore.current }
+    const params: Record<string, any> = { project_id: projectStore.current }
     if (filter.value.type)    params.type    = filter.value.type
     if (filter.value.trigger) params.trigger = filter.value.trigger
     if (filter.value.executor) params.executor = filter.value.executor

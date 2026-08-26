@@ -13,12 +13,15 @@ from enum import Enum
 from typing import Any
 from pydantic import BaseModel, Field
 
+from models.dsl import RiskLevel
+
 
 class GenerationSource(str, Enum):
     """AI 生成来源，用于追溯生成入口和审核上下文。"""
     ANALYZER = "analyzer"
     AI_CHAT = "ai_chat"
     DIFF_EVALUATOR = "diff_evaluator"
+    FAILURE_DIAGNOSER = "failure_diagnoser"
     DATA_FACTORY = "data_factory"
     MANUAL_EDIT = "manual_edit"
 
@@ -62,3 +65,11 @@ class GenerationVersion(BaseModel):
     review_feedback: str | None = None                      # 审核反馈（拒绝原因 / 部分接受说明）
     source: GenerationSource = GenerationSource.ANALYZER    # 生成来源
     job_id: str = ""                                        # 长任务/队列任务 ID，用于追踪进度
+    # ── P0 质量门 / 分级代审 扩展字段（均有默认值，兼容存量） ──
+    quality_score: float = 0.0                              # 0-1 综合质量分
+    confidence: float = 0.0                                 # 0-1 置信度（含 Gate 结果）
+    risk_level: RiskLevel = RiskLevel.MEDIUM                # 生成物风险等级（分级代审依据）
+    gate_results: dict[str, Any] = Field(default_factory=dict)   # {"gate0":..., "gate1":..., "gate2":...}
+    trial_run: dict[str, Any] | None = None                 # 试跑结果 {"passed":..., "coverage":..., "step_failures":[...]}
+    auto_review: bool = False                               # 是否由系统自动判定通过（审计用）
+    dependency_hits: dict[str, Any] | None = None           # 场景依赖与依赖图边的命中情况

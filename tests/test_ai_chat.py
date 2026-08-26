@@ -11,12 +11,14 @@ P1-3: AI 对话面板测试
 from __future__ import annotations
 
 import json
+import pytest
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
+import api.routers.ai_chat as ai_chat_module
 from api.routers.ai_chat import (
-    router, _build_system_with_context, _sse, _CHAT_SYSTEM, _AVAILABLE_TOOLS,
-    _TOOL_DEFINITIONS, _coerce_limit, _parse_tool_arguments, _sanitize_tool_result,
+    router, _build_enhanced_system_prompt, _sse, _CHAT_SYSTEM, _AVAILABLE_TOOLS,
+    _ALL_TOOL_DEFINITIONS, _coerce_limit, _parse_tool_arguments, _sanitize_tool_result,
     _extract_first_json, _structured_chat_generation_content,
     CHAT_CTX_MAX_ROUNDS, CHAT_CTX_TTL,
 )
@@ -60,9 +62,9 @@ def test_chat_tools_returns_tool_list():
 
 def test_tool_definitions_match_public_tool_list():
     """OpenAI tools 协议定义应与公开工具列表保持一致。"""
-    names = [t["function"]["name"] for t in _TOOL_DEFINITIONS]
+    names = [t["function"]["name"] for t in _ALL_TOOL_DEFINITIONS]
     assert names == _AVAILABLE_TOOLS
-    for tool in _TOOL_DEFINITIONS:
+    for tool in _ALL_TOOL_DEFINITIONS:
         assert tool["type"] == "function"
         assert tool["function"]["parameters"]["type"] == "object"
         assert tool["function"]["parameters"]["additionalProperties"] is False
@@ -88,20 +90,22 @@ def test_tool_result_sanitizes_sensitive_fields():
     assert result["nested"]["name"] == "ok"
 
 
-def test_build_system_with_context_injects_page_info():
+@pytest.mark.asyncio
+async def test_build_system_with_context_injects_page_info():
     """上下文应注入 system prompt。"""
-    ctx = {"type": "api", "id": "api-123"}
-    result = _build_system_with_context(_CHAT_SYSTEM, ctx, None)
+    ctx = {"type": "custom", "id": "api-123"}
+    result = await _build_enhanced_system_prompt(_CHAT_SYSTEM, ctx, None)
     assert "api-123" in result, "应包含上下文 ID"
-    assert "api" in result.lower(), "应包含上下文类型"
+    assert "custom" in result.lower(), "应包含上下文类型"
     assert "当前页面上下文" in result
 
 
-def test_build_system_with_context_empty_returns_base():
+@pytest.mark.asyncio
+async def test_build_system_with_context_empty_returns_base():
     """空上下文 → 返回原始 system prompt。"""
-    result = _build_system_with_context(_CHAT_SYSTEM, {}, None)
+    result = await _build_enhanced_system_prompt(_CHAT_SYSTEM, {}, None)
     assert result == _CHAT_SYSTEM
-    result2 = _build_system_with_context(_CHAT_SYSTEM, None, None)
+    result2 = await _build_enhanced_system_prompt(_CHAT_SYSTEM, None, None)
     assert result2 == _CHAT_SYSTEM
 
 
@@ -133,6 +137,76 @@ def test_chat_history_endpoints_exist():
     assert any("/ai/chat/history/" in p and "DELETE" in ms for p, ms in paths_methods), "应有 DELETE history 端点"
 
 
+@pytest.mark.asyncio
+async def test_clear_chat_history_archives_to_requested_project_for_admin(monkeypatch):
+    """清空历史归档 L3 时应使用请求携带的项目，而不是硬编码 default。"""
+    calls = []
+
+    class FakeMemory:
+        async def end_session(self, user_id, session_id, project_id):
+            calls.append(("end_session", user_id, session_id, project_id))
+            return "summary"
+
+        async def delete_l4(self, user_id, session_id):
+            calls.append(("delete_l4", user_id, session_id))
+            return True
+
+    class FakeRedis:
+        async def delete(self, key):
+            calls.append(("redis_delete", key))
+            return 1
+
+    async def fake_get_redis():
+        return FakeRedis()
+
+    monkeypatch.setattr(ai_chat_module, "_get_memory", lambda: FakeMemory())
+    monkeypatch.setattr(ai_chat_module, "get_redis", fake_get_redis)
+
+    result = await ai_chat_module.clear_chat_history(
+        "session-1",
+        project_id="project-a",
+        user={"username": "alice", "role": "admin", "project_id": "default"},
+    )
+
+    assert result == {"cleared": True, "session_id": "session-1"}
+    assert ("end_session", "alice", "session-1", "project-a") in calls
+    assert ("end_session", "alice", "session-1", "default") not in calls
+    assert ("delete_l4", "alice", "session-1") in calls
+    assert ("redis_delete", "chat_ctx:alice:session-1") in calls
+
+
+@pytest.mark.asyncio
+async def test_clear_chat_history_uses_user_project_for_non_admin(monkeypatch):
+    """普通用户即使传入其它项目，也只能把会话归档到自己的项目。"""
+    archived_projects = []
+
+    class FakeMemory:
+        async def end_session(self, user_id, session_id, project_id):
+            archived_projects.append(project_id)
+            return "summary"
+
+        async def delete_l4(self, user_id, session_id):
+            return True
+
+    class FakeRedis:
+        async def delete(self, key):
+            return 1
+
+    async def fake_get_redis():
+        return FakeRedis()
+
+    monkeypatch.setattr(ai_chat_module, "_get_memory", lambda: FakeMemory())
+    monkeypatch.setattr(ai_chat_module, "get_redis", fake_get_redis)
+
+    await ai_chat_module.clear_chat_history(
+        "session-2",
+        project_id="other-project",
+        user={"username": "bob", "role": "tester", "project_id": "project-b"},
+    )
+
+    assert archived_projects == ["project-b"]
+
+
 def test_chat_system_prompt_has_role_definition():
     """_CHAT_SYSTEM 应定义 AI 角色和能力。"""
     assert "ApiPulse" in _CHAT_SYSTEM, "应提及平台名"
@@ -142,8 +216,8 @@ def test_chat_system_prompt_has_role_definition():
 
 
 def test_chat_context_config_reasonable():
-    """对话上下文配置应合理（轮数和 TTL）。"""
-    assert CHAT_CTX_MAX_ROUNDS == 20, "应保留 20 轮历史"
+    """对话上下文配置应合理（保留窗口和 TTL）。"""
+    assert CHAT_CTX_MAX_ROUNDS == 20, "保留窗口配置正确"
     assert CHAT_CTX_TTL == 86400 * 7, "TTL 应为 7 天"
 
 

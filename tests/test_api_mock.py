@@ -4,7 +4,9 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from api.routers.apis import create_mock_case, get_mock_response, list_mock_cases
+from api.routers.mock_services import _mock_access_key_required
 from services.api_service import ApiService
+from services.mock_service import MockServiceManager
 from models.dsl import ApiDSL, ApiDoc, ParamDoc, HttpMethod, RequestDSL, ResponseDSL
 
 
@@ -106,6 +108,30 @@ def test_check_contract_summary_format():
     result = ApiService.check_contract({"code": "wrong"}, api)
     assert "缺失" in result["summary"]
     assert "类型不匹配" in result["summary"]
+
+
+def test_mock_service_public_access_allows_key_disabled_without_key():
+    manager = MockServiceManager(MagicMock())
+    data = manager._validate_service_public_access({
+        "public_enabled": True,
+        "access_key_enabled": False,
+        "access_key": "",
+    })
+
+    assert data["access_key_enabled"] is False
+    assert _mock_access_key_required(data) is False
+
+
+def test_mock_service_key_disabled_ignores_existing_key():
+    service = {"public_enabled": True, "access_key_enabled": False, "access_key": "secret"}
+
+    assert _mock_access_key_required(service) is False
+
+
+def test_mock_service_legacy_access_key_still_requires_key():
+    service = {"public_enabled": True, "access_key": "secret"}
+
+    assert _mock_access_key_required(service) is True
 
 
 class _FakeCursor:

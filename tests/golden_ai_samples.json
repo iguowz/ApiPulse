@@ -1,0 +1,220 @@
+{
+  "doc": {
+    "raw": {
+      "summary": "用户登录接口",
+      "description": "使用用户名和密码换取访问令牌。",
+      "params": [
+        {
+          "name": "username",
+          "location": "body",
+          "type": "string",
+          "required": true,
+          "description": "登录名",
+          "example": "alice"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "data.token",
+          "location": "body",
+          "type": "string",
+          "required": true,
+          "description": "访问令牌",
+          "example": "eyJ..."
+        }
+      ],
+      "tags": ["auth"]
+    },
+    "expect": {
+      "summary": "用户登录接口",
+      "param_count": 1,
+      "response_field_count": 1
+    }
+  },
+  "asserts": {
+    "raw": [
+      {
+        "field": "status_code",
+        "operator": "eq",
+        "expected": 200,
+        "description": "HTTP 200",
+        "risk_level": "critical"
+      },
+      {
+        "field": "$.data.token",
+        "operator": "not_empty",
+        "expected": null,
+        "description": "Token 不为空",
+        "risk_level": "high"
+      }
+    ],
+    "expect": {
+      "count": 2,
+      "first_field": "status_code"
+    }
+  },
+  "scenario": {
+    "raw": [
+      {
+        "name": "登录主流程",
+        "description": "验证登录接口返回令牌",
+        "coverage_tags": ["happy_path", "auth"],
+        "steps": [
+          {
+            "type": "start",
+            "step_id": "start",
+            "depends_on": []
+          },
+          {
+            "type": "api",
+            "step_id": "login",
+            "api_id": "api-login",
+            "name": "登录",
+            "depends_on": ["start"],
+            "extract": {"token": "$.data.token"},
+            "override_params": {},
+            "override_headers": {},
+            "assertions": []
+          },
+          {
+            "type": "end",
+            "step_id": "end",
+            "depends_on": ["login"]
+          }
+        ]
+      }
+    ],
+    "expect": {
+      "count": 1,
+      "first_name": "登录主流程"
+    }
+  },
+  "data_template": {
+    "raw": {
+      "fields": [
+        {
+          "name": "email",
+          "faker_method": "email",
+          "invalid_values": ["not_an_email"],
+          "invalid_rate": 0.1,
+          "null_rate": 0.0,
+          "description": "邮箱"
+        }
+      ],
+      "summary": "增强邮箱字段"
+    },
+    "expect": {
+      "field_count": 1,
+      "first_name": "email"
+    }
+  },
+  "monitor": {
+    "raw": {
+      "monitors": [
+        {
+          "name": "登录接口巡检",
+          "target_type": "api",
+          "target_id": "api-login",
+          "interval": "5m",
+          "cron": "",
+          "risk_level": "high",
+          "max_consecutive_failures": 3,
+          "diff_threshold": 3,
+          "diff_ignore_paths": [],
+          "asserts": [
+            {
+              "field": "status_code",
+              "operator": "eq",
+              "expected": 200,
+              "description": "HTTP 200",
+              "risk_level": "critical"
+            }
+          ],
+          "alert_channels": [],
+          "description": "核心登录巡检"
+        }
+      ],
+      "summary": "建议创建高频登录巡检"
+    },
+    "expect": {
+      "count": 1,
+      "target_type": "api"
+    }
+  },
+  "diff": {
+    "raw": {
+      "is_valid": true,
+      "root_cause": "ai_doc_error",
+      "severity": "medium",
+      "reasoning": "响应字段 data.userId 实际存在但旧文档缺失。",
+      "fix_suggestion": {
+        "response_fields": [
+          {
+            "name": "data.userId",
+            "location": "body",
+            "type": "string",
+            "required": true,
+            "description": "用户 ID",
+            "example": "u_001"
+          }
+        ]
+      }
+    },
+    "expect": {
+      "root_cause": "ai_doc_error",
+      "severity": "medium",
+      "has_fix": true
+    }
+  },
+  "doc_fix": {
+    "raw": {
+      "params": [
+        {
+          "name": "tenant_id",
+          "location": "header",
+          "type": "string",
+          "required": true,
+          "description": "租户 ID",
+          "example": "t_001"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "data.userId",
+          "location": "body",
+          "type": "string",
+          "required": true,
+          "description": "用户 ID",
+          "example": "u_001"
+        }
+      ]
+    },
+    "expect": {
+      "param_count": 1,
+      "response_field_count": 1
+    }
+  },
+  "diagnose": {
+    "raw": {
+      "root_cause": "assertion_error",
+      "explanation": "业务码从 0 变为 1001，当前断言期望已不匹配实际响应。",
+      "suggested_fix": "进入审核中心确认是否更新业务码断言，或回滚接口响应。",
+      "confidence": 0.92
+    },
+    "expect": {
+      "root_cause": "assertion_error",
+      "confidence": 0.92
+    }
+  },
+  "chat": {
+    "raw": {
+      "gen_type": "doc",
+      "assistant_response": "{\"summary\":\"登录接口\",\"description\":\"登录并返回 token\",\"params\":[],\"response_fields\":[],\"tags\":[\"auth\"]}",
+      "user_message": "为登录接口生成文档"
+    },
+    "expect": {
+      "summary": "登录接口",
+      "fallback": false
+    }
+  }
+}

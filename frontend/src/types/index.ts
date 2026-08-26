@@ -143,6 +143,8 @@ export interface ScenarioStep {
   loop_count: number | null
   wait_ms: number  // 步骤执行前等待时间(毫秒)，0 表示不等待
   data_template_id: string
+  pos_x?: number
+  pos_y?: number
   start_params?: { name: string, type: string, default: any }[]  // Start 步骤定义的入参列表
   // Postman 式编辑器扩展字段
   auth: Record<string, any>

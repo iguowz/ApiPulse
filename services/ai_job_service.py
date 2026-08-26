@@ -42,6 +42,9 @@ class AiJobService:
         generation_ids: list[str] | None = None,
         payload: dict[str, Any] | None = None,
         user_id: str = "",
+        error_preview: str = "",
+        references: list[dict[str, Any]] | None = None,
+        risk: str = "",
         finished: bool = False,
     ) -> None:
         if not job_id:
@@ -59,12 +62,17 @@ class AiJobService:
             "queue_key": queue_key,
             "retry_count": retry_count,
             "error": error,
+            "error_preview": error_preview or str(error or "")[:300],
             "updated_at": now,
         }
         if payload is not None:
             update["payload"] = payload
         if user_id:
             update["user_id"] = user_id
+        if references is not None:
+            update["references"] = references
+        if risk:
+            update["risk"] = risk
         if finished:
             update["finished_at"] = now
         update_doc: dict[str, Any] = {

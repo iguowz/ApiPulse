@@ -522,3 +522,31 @@ class ImportDiffRecord(BaseModel):
     project_id: str = "default"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone(timedelta(hours=8))))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone(timedelta(hours=8))))
+
+
+# ── API 依赖关系（数据驱动依赖发现，Q1） ───────────────────
+# 依赖图：upstream(提供字段) -> downstream(消费字段)，用于约束场景生成、避免 LLM 臆造依赖。
+
+class DependencyEvidence(str, Enum):
+    """依赖关系证据来源（按可信度递增）。"""
+    STATIC_NAME = "static_name"      # 字段名/变量名同名（弱信号）
+    STATIC_EMBED = "static_embed"    # 语义 embedding 相似
+    STATIC_ENUM = "static_enum"      # 值域/枚举覆盖
+    DYNAMIC_RUN = "dynamic_run"      # 实际执行观测到下游参数=上游响应字段值（强证据）
+    HUMAN_CONFIRM = "human_confirm"  # 人工确认
+
+
+class ApiDependencyEdge(BaseModel):
+    """一条 API 数据依赖边：下游参数值来源于上游响应字段。"""
+    id: str = ""
+    project_id: str = "default"
+    upstream_api_id: str            # 被依赖方（提供字段）
+    downstream_api_id: str          # 依赖方（消费字段）
+    field_map: dict[str, str] = Field(default_factory=dict)  # {下游参数名: 上游响应字段 JSONPath}，如 {"userId": "$.data.user.id"}
+    evidence: DependencyEvidence = DependencyEvidence.STATIC_NAME
+    confidence: float = 0.0         # 0-1，综合评分
+    status: str = "candidate"       # candidate / confirmed / rejected
+    observed_count: int = 0         # 动态/多次观测次数
+    source: str = "static"          # static / dynamic / ai / manual
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone(timedelta(hours=8))))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone(timedelta(hours=8))))

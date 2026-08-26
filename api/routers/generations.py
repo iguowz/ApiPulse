@@ -54,6 +54,42 @@ def _normalize_generation_doc(doc: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
+def _generation_references(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """统一引用结构，供审核中心、工作台、AI 助手跳转。"""
+    project_id = doc.get("project_id", "default")
+    refs: list[dict[str, Any]] = []
+    generation_id = str(doc.get("id") or doc.get("_id") or "")
+    if generation_id:
+        refs.append({
+            "type": "generation",
+            "id": generation_id,
+            "title": doc.get("summary") or doc.get("type") or generation_id,
+            "path": doc.get("api_id", ""),
+            "route": "/generations?status=pending_review",
+            "project_id": project_id,
+        })
+    for api_id in [aid for aid in (doc.get("api_ids") or []) if aid][:8]:
+        refs.append({
+            "type": "api",
+            "id": api_id,
+            "title": api_id,
+            "path": "",
+            "route": f"/apis/{api_id}",
+            "project_id": project_id,
+        })
+    return refs
+
+
+def _enrich_generation_summary(doc: dict[str, Any]) -> dict[str, Any]:
+    """给列表/详情补齐兼容字段，不改变原始数据结构。"""
+    doc["target_ids"] = [aid for aid in (doc.get("api_ids") or []) if aid] or ([doc.get("api_id")] if doc.get("api_id") else [])
+    doc["generation_ids"] = [str(doc.get("id") or doc.get("_id") or "")]
+    doc["error_preview"] = str(doc.get("analysis_error") or doc.get("error") or "")[:300]
+    doc["references"] = _generation_references(doc)
+    doc["risk"] = doc.get("risk") or doc.get("risk_level") or ""
+    return doc
+
+
 def _review_stats_filter(doc: dict[str, Any]) -> dict[str, Any]:
     """构造同一 AI 生成节点的统计范围，优先按 job_id，缺失时按 type/api/project 聚合。"""
     filt: dict[str, Any] = {
@@ -214,6 +250,10 @@ async def list_generations(
     type: str | None = Query(default=None, description="筛选类型: doc/asserts/scenario"),
     status: str | None = Query(default=None, description="筛选状态: pending_review/accepted/partially_accepted/rejected"),
     api_id: str | None = Query(default=None, description="按关联 API ID 筛选"),
+    job_id: str | None = Query(default=None, description="按 AI job_id 筛选"),
+    source: str | None = Query(default=None, description="按来源筛选"),
+    target_id: str | None = Query(default=None, description="按统一目标 ID 筛选"),
+    risk: str | None = Query(default=None, description="按风险等级筛选"),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=30, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
@@ -224,17 +264,29 @@ async def list_generations(
     """
     collection = (await get_db()).get_collection("generation_versions")
     project_id = visible_project_id(current_user, project_id)
-    # 构建查询过滤器
+    # 构建查询过滤器；多个 $or 条件必须用 $and 包裹，避免互相覆盖。
     filt: dict[str, Any] = {"project_id": project_id}
+    and_conditions: list[dict[str, Any]] = []
     if type:
         filt["type"] = type
     if status:
         filt["status"] = status
+    if job_id:
+        filt["job_id"] = job_id
+    if source:
+        filt["source"] = source
+    if risk:
+        and_conditions.append({"$or": [{"risk": risk}, {"risk_level": risk}, {"content.risk_level": risk}]})
     if api_id:
         # Bug5/10 修复：scenario 类型用 api_ids 数组关联多个 API，此前只匹配 api_id 单字段，
         # 导致场景类生成在按 API 维度查询时系统性丢失（API 详情审核 tab 无内容、审核中心看不到 scenario）。
         # 改为 $or 同时匹配 api_id 单字段或 api_ids 数组包含。
-        filt["$or"] = [{"api_id": api_id}, {"api_ids": api_id}]
+        and_conditions.append({"$or": [{"api_id": api_id}, {"api_ids": api_id}]})
+    if target_id:
+        target_filter = [{"api_id": target_id}, {"api_ids": target_id}, {"content.template_id": target_id}, {"content.monitors.target_id": target_id}]
+        and_conditions.append({"$or": target_filter})
+    if and_conditions:
+        filt = {"$and": [filt, *and_conditions]}
 
     total = await collection.count_documents(filt)
     # 按创建时间倒序，最新优先展示
@@ -248,6 +300,7 @@ async def list_generations(
         doc.pop("content", None)
         doc.pop("prompt", None)
         doc["review_stats"] = await _review_stats(collection, doc)
+        _enrich_generation_summary(doc)
         items.append(doc)
 
     api_ids = list({item.get("api_id") for item in items if item.get("api_id")})
@@ -266,6 +319,50 @@ async def list_generations(
     return {"total": total, "items": items}
 
 
+# ── P0-D5 渐进信任看板 ────────────────────────────────────────
+
+@router.get("/generations/auto-review-stats")
+async def auto_review_stats(
+    project_id: str = Query(default="", description="项目id，缺省统计全部"),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """P0-D5 渐进信任看板：自动通过 / 试跑 / 置信度 健康度，用于决定何时放开 auto_review_enabled。"""
+    from config.settings import get_settings
+    s = get_settings()
+    col = db["generation_versions"]
+    q: dict[str, Any] = {"project_id": project_id} if project_id else {}
+    if project_id:
+        ensure_project_access(current_user, project_id)
+
+    total = await col.count_documents(q)
+    pending = await col.count_documents({**q, "status": "pending_review"})
+    accepted = await col.count_documents({**q, "status": "accepted"})
+    rejected = await col.count_documents({**q, "status": "rejected"})
+    auto_applied = await col.count_documents({**q, "status": "accepted", "auto_review": True})
+    trial_present = await col.count_documents({"trial_run": {"$exists": True, "$ne": None}, **q})
+    trial_passed = await col.count_documents({"trial_run.passed": True, **q})
+    high_conf = await col.count_documents({**q, "confidence": {"$gte": s.auto_review_min_confidence}})
+
+    def pct(n: int) -> float:
+        return round(n / total, 3) if total else 0.0
+
+    return {
+        "auto_review_enabled": s.auto_review_enabled,
+        "auto_review_min_confidence": s.auto_review_min_confidence,
+        "total": total,
+        "status": {"pending_review": pending, "accepted": accepted, "rejected": rejected},
+        "auto_applied": auto_applied,
+        "trial_run": {"present": trial_present, "passed": trial_passed},
+        "high_confidence": high_conf,
+        "rates": {
+            "non_pending": pct(total - pending),
+            "auto_review_rate": pct(auto_applied),
+            "trial_pass_rate": pct(trial_passed),
+            "high_conf_rate": pct(high_conf),
+        },
+    }
+
 # ── 详情查询 ──────────────────────────────────────────────────
 
 @router.get("/generations/{generation_id}")
@@ -281,7 +378,7 @@ async def get_generation(
     ensure_project_access(current_user, doc.get("project_id"))
     collection = (await get_db()).get_collection("generation_versions")
     doc["review_stats"] = await _review_stats(collection, doc)
-    return _normalize_generation_doc(doc)
+    return _enrich_generation_summary(_normalize_generation_doc(doc))
 
 
 # ── Diff 对比 ─────────────────────────────────────────────────
@@ -514,18 +611,15 @@ async def reject_generation(
     if feedback and _state._knowledge_service is not None:
         try:
             if gv_doc:
-                await _state._knowledge_service.add_entry(
-                    project_id=gv_doc.get("project_id", "default"),
-                    type="rejection_feedback",
-                    title=f"Rejected: {gv_doc.get('type', 'unknown')} for {gv_doc.get('api_id', '')}",
-                    content=feedback,
-                    source="human_review",
-                    metadata={
-                        "generation_id": generation_id,
-                        "api_id": gv_doc.get("api_id", ""),
-                        "gen_type": gv_doc.get("type", ""),
-                    },
-                )
+                await _state._knowledge_service.upsert_entry({
+                    "project_id": gv_doc.get("project_id", "default"),
+                    "type": "doc_pattern",
+                    "title": f"拒绝反馈: {gv_doc.get('type', 'unknown')} {gv_doc.get('api_id', '')}".strip(),
+                    "content": feedback,
+                    "source": "human_review",
+                    "tags": ["review", "rejected", gv_doc.get("type", ""), f"api:{gv_doc.get('api_id', '')}"],
+                    "source_api_ids": [gv_doc.get("api_id", "")] if gv_doc.get("api_id") else [],
+                })
         except Exception as e:
             # 知识写入失败不阻塞拒绝操作
             logger.warning("Failed to write rejection feedback to knowledge: {}", e)
@@ -535,6 +629,15 @@ async def reject_generation(
         reviewer_id=reviewer_id,
         extra=feedback if feedback else None,
     )
+    # P0-D4 反馈闭环：拒绝生成物 → 弱化其涉及的 API 依赖边（越用越准）
+    try:
+        from services.dependency_service import DependencyService
+        api_ids = gv_doc.get("api_ids") or ([gv_doc.get("api_id")] if gv_doc.get("api_id") else [])
+        await DependencyService(await get_db()).decay_edges_for_generation(
+            gv_doc.get("project_id", "default"), api_ids,
+        )
+    except Exception as e:
+        logger.warning("Dependency edge decay failed (non-blocking): {}", e)
 
     # 审计日志
     await audit_service.log_action(
@@ -547,6 +650,91 @@ async def reject_generation(
         extra={"feedback": feedback},
     )
     return {"rejected": True}
+
+
+@router.post("/generations/batch")
+async def batch_review_generations(
+    body: dict[str, Any] = Body(...),
+    request: Request = None,
+    current_user: dict = Depends(get_current_user),
+    audit_service: AuditService = Depends(get_audit_service),
+):
+    """批量审核 AI 生成内容。
+
+    body:
+    - ids: generation id 列表
+    - action: accept / reject
+    - feedback: reject 时的原因
+    """
+    if _state._ai_analyzer is None:
+        raise HTTPException(503, "AI service not available")
+    ids = [str(i) for i in (body.get("ids") or []) if i]
+    action = str(body.get("action") or "").strip()
+    feedback = str(body.get("feedback") or "")
+    if action not in {"accept", "reject"}:
+        raise HTTPException(400, "action must be accept or reject")
+    if not ids:
+        raise HTTPException(400, "ids is required")
+
+    user = current_user or _get_user_from_request(request)
+    reviewer_id = user.get("username") if user else None
+    collection = (await get_db()).get_collection("generation_versions")
+    now = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
+    results: list[dict[str, Any]] = []
+
+    for generation_id in ids:
+        gv_doc = await _load_generation_doc(generation_id)
+        if not gv_doc:
+            results.append({"id": generation_id, "ok": False, "error": "not_found"})
+            continue
+        try:
+            ensure_project_access(current_user, gv_doc.get("project_id"))
+            if action == "accept":
+                ok = await _state._ai_analyzer.apply_version(generation_id=generation_id, reviewer_id=reviewer_id)
+                if ok:
+                    await _record_review_to_memory(gv_doc, "accepted", reviewer_id=reviewer_id)
+                results.append({"id": generation_id, "ok": bool(ok)})
+            else:
+                try:
+                    result = await collection.update_one(
+                        {"_id": ObjectId(generation_id)},
+                        {"$set": {
+                            "status": "rejected",
+                            "reviewed_at": now,
+                            "reviewer_id": reviewer_id,
+                            "review_feedback": feedback,
+                        }},
+                    )
+                except Exception:
+                    result = await collection.update_one(
+                        {"id": generation_id},
+                        {"$set": {
+                            "status": "rejected",
+                            "reviewed_at": now,
+                            "reviewer_id": reviewer_id,
+                            "review_feedback": feedback,
+                        }},
+                    )
+                ok = result.matched_count > 0
+                if ok:
+                    await _record_review_to_memory(gv_doc, "rejected", reviewer_id=reviewer_id, extra=feedback or None)
+                results.append({"id": generation_id, "ok": ok})
+        except Exception as e:
+            logger.warning("batch review failed for {}: {}", generation_id, e)
+            results.append({"id": generation_id, "ok": False, "error": str(e)[:120]})
+
+    ok_count = sum(1 for r in results if r.get("ok"))
+    await audit_service.log_action(
+        user=user,
+        action=AuditAction.UPDATE,
+        resource=AuditResource.API,
+        resource_id="batch",
+        resource_name=f"batch {action} generations",
+        detail=f"批量审核 AI 生成内容: {action}, ok={ok_count}/{len(ids)}",
+        ip=_get_client_ip(request) if request else "",
+        extra={"ids": ids, "results": results},
+    )
+    return {"ok": ok_count, "total": len(ids), "items": results}
 
 
 # ── 编辑后接受 ────────────────────────────────────────────────
@@ -666,3 +854,7 @@ async def _record_review_to_memory(
     except Exception as e:
         # L2 记忆写入失败不阻塞审核操作
         logger.warning("Failed to record review feedback to L2 memory: {}", e)
+
+
+
+

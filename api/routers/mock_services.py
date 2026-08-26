@@ -29,6 +29,21 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
+def _mock_access_key_required(service: dict[str, Any]) -> bool:
+    access_key = str(service.get("access_key") or "")
+    return bool(service.get("access_key_enabled", bool(access_key)) and access_key)
+
+
+def _supplied_mock_access_key(request: Request) -> str:
+    # 同时支持 Header X-Mock-Key、查询参数 mock_key（下划线）和 mock-key（连字符）
+    return (
+        request.headers.get("X-Mock-Key")
+        or request.query_params.get("mock_key")
+        or request.query_params.get("mock-key")
+        or ""
+    )
+
+
 @router.get("/mock-services")
 async def list_mock_services(
     project_id: str = "default",
@@ -287,16 +302,8 @@ async def public_mock_service(
     if not service:
         raise HTTPException(404, "Mock service not found")
     access_key = service.get("access_key") or ""
-    # mock_key 可选：仅当服务配置了 access_key 时才校验
-    if access_key:
-        # 同时支持 Header X-Mock-Key、查询参数 mock_key（下划线）和 mock-key（连字符）
-        supplied = (
-            request.headers.get("X-Mock-Key")
-            or request.query_params.get("mock_key")
-            or request.query_params.get("mock-key")
-            or ""
-        )
-        if supplied != access_key:
+    if _mock_access_key_required(service):
+        if _supplied_mock_access_key(request) != access_key:
             raise HTTPException(403, "Invalid mock access key")
 
     return await _eval_mock_service(service, path, request, manager)
@@ -315,15 +322,8 @@ async def public_mock_service_short(
     if not service:
         raise HTTPException(404, "Mock service not found")
     access_key = service.get("access_key") or ""
-    if access_key:
-        # 同时支持 Header X-Mock-Key、查询参数 mock_key（下划线）和 mock-key（连字符）
-        supplied = (
-            request.headers.get("X-Mock-Key")
-            or request.query_params.get("mock_key")
-            or request.query_params.get("mock-key")
-            or ""
-        )
-        if supplied != access_key:
+    if _mock_access_key_required(service):
+        if _supplied_mock_access_key(request) != access_key:
             raise HTTPException(403, "Invalid mock access key")
 
     return await _eval_mock_service(service, path, request, manager)

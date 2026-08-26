@@ -32,7 +32,7 @@
             <span class="text-2 queue-strip-sub">{{ $t('dashboard.queue_status_sub', { pending: queueSummary.totalPending, dlq: queueSummary.totalDlq }) }}</span>
           </div>
           <div class="queue-strip-actions">
-            <el-tag v-for="q in queueHighlights" :key="q.key" size="small" :type="q.dlq ? 'danger' : q.pending > 0 ? 'warning' : 'info'">
+            <el-tag v-for="q in queueHighlights" :key="q.key" size="small" class="queue-link" :type="q.dlq ? 'danger' : q.pending > 0 ? 'warning' : 'info'" @click="openQueue(q)">
               {{ q.name }} {{ q.pending }}<span v-if="q.dlq"> / {{ $t('dashboard.queue_dlq_short') }} {{ q.dlq }}</span>
             </el-tag>
             <el-button size="small" @click="dashboardTab = 'workbench'">{{ $t('dashboard.view_workbench') }}</el-button>
@@ -420,7 +420,7 @@
               <template #header>
                 <span class="card-title">{{ $t('dashboard.workbench_long_queues') }}</span>
               </template>
-              <el-table :data="queueRows" size="small" :empty-text="$t('common.no_data')" max-height="280">
+              <el-table :data="queueRows" size="small" :empty-text="$t('common.no_data')" max-height="280" @row-click="openQueue" style="cursor:pointer">
                 <el-table-column :label="$t('dashboard.workbench_queue')" min-width="160">
                   <template #default="{ row }">{{ row.name }}</template>
                 </el-table-column>
@@ -461,7 +461,7 @@ import { LineChart, PieChart, BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
-import { statsApi, executionApi, alertApi, auditApi, systemApi } from '@/api'
+import { statsApi, executionApi, alertApi, auditApi, systemApi, generationApi } from '@/api'
 import { useProjectStore, useToastStore } from '@/stores'
 import { fmt, riskTagType } from '@/utils'
 import ResultTag from '@/components/ResultTag.vue'
@@ -488,7 +488,8 @@ const recentAlerts = ref([])
 const recentAuditLogs = ref([])
 const workbench = ref({ counts: {}, tasks: [] })
 const queueStatus = ref({ queues: {}, dlq: {} })
-
+// P0-D5 自动通过看板（面板内标签页）：自动通过/试跑/置信度健康度
+const arStats = ref(null)
 // 新增 Dashboard 数据
 const topFailing = ref([])
 const topFailingHours = ref(24)
@@ -644,6 +645,7 @@ const queueRows = computed(() => {
   const queues = queueStatus.value.queues || {}
   return Object.entries(queueNameMap).map(([key, nameKey]) => ({
     key,
+    id: queues[key]?.id || key.replace(/^queue:/, '').replace(':', '_'),
     name: t(nameKey),
     pending: queues[key]?.pending ?? 0,
     dlq: queues[key]?.dlq ?? 0,
@@ -701,6 +703,19 @@ const aiKpis = computed(() => {
       value: fmtNumber(q.generations?.total_tokens || 0),
       sub: t('dashboard.ai_kpi_tokens_sub', { input: fmtNumber(q.generations?.input_tokens || 0), output: fmtNumber(q.generations?.output_tokens || 0) }),
       color: 'var(--text)', subColor: 'text-2' },
+    // P0-D5 自动通过（并入 AI 产出）：低风险+高置信+试跑通过 → 系统自动采纳
+    { label: t('dashboard.ai_metric_auto_applied'), desc: t('dashboard.desc_ai_auto_applied'),
+      value: (arStats.value?.auto_applied ?? 0),
+      sub: t('dashboard.ai_kpi_auto_applied_sub', { count: arStats.value?.auto_applied ?? 0 }),
+      color: (arStats.value?.auto_applied ?? 0) ? 'var(--green)' : 'var(--text)', subColor: 'text-2' },
+    { label: t('dashboard.ai_metric_trial_pass'), desc: t('dashboard.desc_ai_trial_pass'),
+      value: `${(arStats.value?.trial_run?.passed ?? 0)}/${arStats.value?.trial_run?.present ?? 0}`,
+      sub: t('dashboard.ai_kpi_trial_sub', { rate: arStats.value?.rates?.trial_pass_rate ?? 0 }),
+      color: (arStats.value?.trial_run?.passed ?? 0) ? 'var(--green)' : 'var(--text)', subColor: 'text-2' },
+    { label: t('dashboard.ai_metric_high_conf'), desc: t('dashboard.desc_ai_high_conf'),
+      value: (arStats.value?.high_confidence ?? 0),
+      sub: t('dashboard.ai_kpi_high_conf_sub', { threshold: arStats.value?.auto_review_min_confidence ?? 0.7 }),
+      color: 'var(--text)', subColor: 'text-2' },
   ]
 })
 
@@ -712,6 +727,11 @@ function taskItems(type) {
 function openWorkbenchItem(item) {
   if (!item?.count) return
   router.push(item.action)
+}
+
+function openQueue(row) {
+  if (row?.dlq > 0) router.push(`/settings?tab=dlq&queue=${encodeURIComponent(row.id || '')}`)
+  else router.push('/settings?tab=ai-jobs')
 }
 
 function fmtNumber(n) {
@@ -886,6 +906,12 @@ async function fetchQueues() {
   } catch { queueStatus.value = { queues: {}, dlq: {} } }
 }
 
+async function fetchAutoReview() {
+  try {
+    arStats.value = await generationApi.autoReviewStats(projectStore.current)
+  } catch { arStats.value = null }
+}
+
 async function refresh() {
   // 防止多次并发调用（切换项目时 watch + onMounted 可能同时触发）
   if (loading.value) return
@@ -910,6 +936,7 @@ async function refresh() {
       fetchAuditLogs(),
       fetchWorkbench(),
       fetchQueues(),
+      fetchAutoReview(),
     ])
   } catch (e) {
     toast.error(e.message || t('toast.refresh_failed'))
@@ -948,6 +975,7 @@ onMounted(async () => {
 .queue-strip-actions {
   display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap;
 }
+.queue-link { cursor: pointer; }
 
 .ai-panel-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px;

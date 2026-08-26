@@ -19,6 +19,7 @@ from redis.asyncio import Redis
 
 from ai_analyzer.utils import safe_fire_and_forget
 from config.settings import get_settings
+from models.generation_version import GenerationSource, GenerationStatus, GenerationType, GenerationVersion
 from services.ai_job_service import AiJobService
 from services.llm_config_service import resolve_llm_config
 from services.structured_output_service import StructuredOutputError, parse_structured_output
@@ -37,6 +38,48 @@ def _structured_error_detail(exc: Exception) -> str:
             detail = f"{detail}; raw_output_preview={exc.raw_output_preview[:300]}"
         return detail[:800]
     return str(exc)[:800]
+
+
+def _risk_from_diagnosis(diagnosis: dict) -> str:
+    confidence = float(diagnosis.get("confidence") or 0)
+    root_cause = diagnosis.get("root_cause")
+    if root_cause in {"api_change", "assertion_error"} and confidence >= 0.7:
+        return "high"
+    if root_cause in {"timeout", "data_issue", "env_mismatch"}:
+        return "medium"
+    return "low"
+
+
+def _diagnosis_references(execution_id: str, exec_doc: dict, generation_id: str = "") -> list[dict]:
+    project_id = exec_doc.get("project_id", "default")
+    refs = [{
+        "type": "execution",
+        "id": execution_id,
+        "title": exec_doc.get("failure_reason") or execution_id,
+        "path": "",
+        "route": f"/executions/{execution_id}",
+        "project_id": project_id,
+    }]
+    api_id = exec_doc.get("api_id", "")
+    if api_id:
+        refs.append({
+            "type": "api",
+            "id": api_id,
+            "title": api_id,
+            "path": "",
+            "route": f"/apis/{api_id}",
+            "project_id": project_id,
+        })
+    if generation_id:
+        refs.append({
+            "type": "generation",
+            "id": generation_id,
+            "title": "失败诊断修复建议",
+            "path": api_id,
+            "route": f"/generations?status=pending_review&job_id=diagnose:{execution_id}",
+            "project_id": project_id,
+        })
+    return refs
 
 
 # ── AI 提示词 ─────────────────────────────────────────────
@@ -335,6 +378,14 @@ class FailureDiagnoserService:
             {"$set": diagnose_doc},
         )
 
+        repair_generation_id = await self._create_assertion_repair_generation(
+            execution_id=execution_id,
+            exec_doc=exec_doc,
+            failed_step=failed_step,
+            failed_asserts=failed_asserts,
+            diagnosis=diagnosis,
+        )
+
         # 8. 广播诊断完成事件（通过 WebSocket 通知前端刷新）
         await self._broadcast("ai_analysis", {
             "type": "diagnosis_done",
@@ -343,15 +394,23 @@ class FailureDiagnoserService:
             "status": "done",
             "root_cause": diagnosis.get("root_cause"),
             "summary": diagnosis.get("explanation", ""),
+            "generation_id": repair_generation_id or "",
             "project_id": exec_doc.get("project_id", "default"),
         })
-        await AiJobService(self._db).mark_done(
+        job_kwargs = dict(
             job_id=f"diagnose:{execution_id}",
             type="diagnose",
             project_id=exec_doc.get("project_id", "default"),
             source="failure_diagnoser",
             target_ids=[execution_id],
+            generation_ids=[repair_generation_id] if repair_generation_id else None,
+            references=_diagnosis_references(execution_id, exec_doc, repair_generation_id),
+            risk=_risk_from_diagnosis(diagnosis),
         )
+        if repair_generation_id:
+            await AiJobService(self._db).mark_pending_review(**job_kwargs)
+        else:
+            await AiJobService(self._db).mark_done(**job_kwargs)
 
         logger.info(
             "Diagnosis done for {}: root_cause={} confidence={:.0%}",
@@ -421,6 +480,102 @@ class FailureDiagnoserService:
                     logger.warning("Diagnosis re-analyze trigger failed for api {}: {}", api_id, e)
 
         return True
+
+    async def _create_assertion_repair_generation(
+        self,
+        *,
+        execution_id: str,
+        exec_doc: dict,
+        failed_step: dict,
+        failed_asserts: list[dict],
+        diagnosis: dict,
+    ) -> str:
+        """为断言失败生成待审核修复版本，不直接修改 API DSL。"""
+        if diagnosis.get("root_cause") != "assertion_error":
+            return ""
+        api_id = failed_step.get("api_id") or exec_doc.get("api_id") or ""
+        if not api_id or not failed_asserts:
+            return ""
+        api_doc = await self._db["api_dsls"].find_one({"id": api_id})
+        if not api_doc:
+            return ""
+
+        current_rules = [r for r in (api_doc.get("asserts") or []) if isinstance(r, dict)]
+        if not current_rules:
+            return ""
+        failed_by_field = {
+            str(a.get("field") or ""): a
+            for a in failed_asserts
+            if isinstance(a, dict) and a.get("field")
+        }
+        if not failed_by_field:
+            return ""
+
+        changed = False
+        proposed_rules: list[dict] = []
+        for rule in current_rules:
+            next_rule = dict(rule)
+            field = str(next_rule.get("field") or "")
+            failure = failed_by_field.get(field)
+            if failure and "actual" in failure:
+                next_rule["expected"] = failure.get("actual")
+                next_rule["description"] = (
+                    f"{next_rule.get('description') or ''} "
+                    f"[AI诊断建议] 执行 {execution_id[:12]} 断言失败，建议按现场 actual 更新期望值。"
+                ).strip()
+                next_rule["risk_level"] = next_rule.get("risk_level") or "medium"
+                changed = True
+            proposed_rules.append(next_rule)
+        if not changed:
+            return ""
+
+        now = datetime.now(timezone(timedelta(hours=8)))
+        content = {
+            "asserts": proposed_rules,
+            "repair": {
+                "source": "failure_diagnosis",
+                "execution_id": execution_id,
+                "step_id": failed_step.get("step_id", ""),
+                "root_cause": diagnosis.get("root_cause", ""),
+                "confidence": diagnosis.get("confidence", 0),
+                "failed_asserts": failed_asserts,
+                "suggested_fix": diagnosis.get("suggested_fix", ""),
+            },
+        }
+        gv = GenerationVersion(
+            id="",
+            api_id=api_id,
+            type=GenerationType.ASSERTS,
+            status=GenerationStatus.PENDING_REVIEW,
+            content=content,
+            summary=f"失败诊断修复建议：更新 {len(failed_by_field)} 条断言期望",
+            model=self._model,
+            latency_ms=0,
+            input_tokens=0,
+            output_tokens=0,
+            prompt=f"Generated from failure diagnosis {execution_id}: {diagnosis.get('explanation', '')}",
+            api_ids=[api_id],
+            project_id=exec_doc.get("project_id", "default"),
+            created_at=now,
+            source=GenerationSource.FAILURE_DIAGNOSER,
+            job_id=f"diagnose:{execution_id}",
+        )
+        doc = gv.model_dump()
+        doc.pop("id", None)
+        result = await self._db["generation_versions"].insert_one(doc)
+        generation_id = str(result.inserted_id)
+        await self._db["diagnosis_diff_links"].insert_one({
+            "execution_id": execution_id,
+            "api_id": api_id,
+            "project_id": exec_doc.get("project_id", "default"),
+            "root_cause": diagnosis.get("root_cause", "assertion_error"),
+            "status": "pending_review",
+            "generation_id": generation_id,
+            "generation_type": GenerationType.ASSERTS.value,
+            "created_at": now.replace(tzinfo=None),
+        })
+        logger.info("Diagnosis assertion repair saved as generation {} for execution {}", generation_id, execution_id)
+        return generation_id
 
     async def _broadcast(self, key: str, data: dict) -> None:
         """安全广播并补齐 AI 事件追踪字段。"""

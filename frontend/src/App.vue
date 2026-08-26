@@ -106,7 +106,9 @@
             <span class="sidebar-user-avatar">{{ (authStore.user?.username || 'U')[0].toUpperCase() }}</span>
             <div class="sidebar-user-meta">
               <span class="sidebar-user-name">{{ authStore.user?.username }}</span>
-              <span v-if="authStore.isAdmin" class="sidebar-user-role">{{ $t('auth.role_admin') }}</span>
+              <span class="sidebar-user-role" :class="`sidebar-user-role--${currentRole}`">
+                {{ $t(currentRoleLabelKey) }}
+              </span>
             </div>
           </div>
           <el-button size="small" text @click="handleLogout" :title="$t('auth.logout')">
@@ -138,6 +140,7 @@ import { Plus, Sunny, Moon } from '@element-plus/icons-vue'
 import { useProjectStore, useToastStore } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
 import { environmentApi, importDiffApi, openWs } from '@/api'
+import { roleLabelKey } from '@/utils/rbac'
 import AiAssistant from '@/components/AiAssistant.vue'  // P1-3: AI 助手浮窗
 
 const { t } = useI18n()
@@ -147,6 +150,8 @@ const router = useRouter()
 const projectStore = useProjectStore()
 const toastStore   = useToastStore()
 const authStore    = useAuthStore()
+const currentRole = computed(() => authStore.role)
+const currentRoleLabelKey = computed(() => roleLabelKey(authStore.role))
 
 // 当前项目是否启用了域名过滤（白名单或黑名单至少一个非空）
 // 同时检查两个列表：任一非空即认为过滤生效，侧边栏显示过滤状态徽章
@@ -315,17 +320,18 @@ const nav = [
   { to: '/monitor',     labelKey: 'nav.monitor',     descKey: 'navDesc.monitor',     icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 8h2l2-4 3 8 2-5 2 3 1-2h2"/></svg>' },
   // P2-7: 告警渠道管理已迁移至设置页面 (?tab=alert-channels)
   { to: '/generations', labelKey: 'nav.generations', descKey: 'navDesc.generations', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6 8l1.5 1.5L10 7"/></svg>' },
+
   { to: '/import-diffs', labelKey: 'nav.importDiffs', descKey: 'navDesc.importDiffs', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 2.5"/></svg>' },
   { to: '/knowledge',   labelKey: 'nav.knowledge',  descKey: 'navDesc.knowledge',  icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 14V6l4-4 3 3 5-3v12H2z"/><rect x="5" y="9" width="2" height="5"/><rect x="9" y="7" width="2" height="7"/></svg>' },
-  // 管理员专属：用户管理导航项，仅 admin 角色可见
-  { to: '/admin/users', labelKey: 'nav.adminUsers', adminOnly: true, descKey: 'navDesc.adminUsers', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-3 2.2-5 5-5s5 2 5 5"/><circle cx="12" cy="7" r="1.5"/><path d="M9 14c0-2 1.3-3.5 3-3.5"/></svg>' },
+  // 用户管理导航项：需要 user:manage 权限
+  { to: '/admin/users', labelKey: 'nav.adminUsers', permission: 'user:manage', descKey: 'navDesc.adminUsers', icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-3 2.2-5 5-5s5 2 5 5"/><circle cx="12" cy="7" r="1.5"/><path d="M9 14c0-2 1.3-3.5 3-3.5"/></svg>' },
   { to: '/settings',    labelKey: 'nav.settings',    descKey: 'navDesc.settings',    icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M1 8h2M13 8h2M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>' },
 ]
 
-// 根据当前语言动态生成导航标签与提示文案，adminOnly 菜单项仅对管理员可见
+// 根据当前语言动态生成导航标签与提示文案，带 permission 的菜单项按 RBAC 权限过滤
 const navItems = computed(() =>
   nav
-    .filter(item => !item.adminOnly || authStore.isAdmin)
+    .filter(item => !item.permission || authStore.hasPermission(item.permission))
     .map(item => ({ ...item, label: t(item.labelKey), desc: t(item.descKey) }))
 )
 
@@ -608,6 +614,10 @@ function handleLogout() {
   font-size: 10px; color: var(--accent); font-weight: 600;
   text-transform: uppercase; letter-spacing: .04em;
 }
+.sidebar-user-role--admin { color: var(--red); }
+.sidebar-user-role--editor { color: var(--amber); }
+.sidebar-user-role--viewer { color: var(--text-3); }
+.sidebar-user-role--monitor_admin { color: var(--green); }
 
 /* Dialog 适配暗色主题 */
 :deep(.el-dialog) {

@@ -2306,6 +2306,15 @@ onMounted(() => {
     activeTab.value = 'bots'
     loadBots()
   }
+  if (route.query.tab === 'ai-jobs') {
+    activeTab.value = 'ai-jobs'
+    loadAiOps()
+  }
+  if (route.query.tab === 'dlq') {
+    activeTab.value = 'dlq'
+    selectedDlqQueue.value = String(route.query.queue || '')
+    loadDlq()
+  }
 })
 </script>
 

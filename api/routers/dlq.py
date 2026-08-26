@@ -111,6 +111,50 @@ def _job_id_for_payload(payload: dict[str, Any]) -> str:
     )
 
 
+def _target_ids_for_payload(payload: dict[str, Any]) -> list[str]:
+    """把不同 AI worker 的 payload 统一成 target_ids。"""
+    values = payload.get("api_ids") or [
+        payload.get(k)
+        for k in ("api_id", "template_id", "diff_id", "execution_id", "alert_id", "monitor_id")
+        if payload.get(k)
+    ]
+    return [str(v) for v in values if v]
+
+
+def _references_for_targets(target_ids: list[str], queue_id: str, project_id: str) -> list[dict[str, Any]]:
+    """统一引用结构，供工作台/助手/审核中心跳转。"""
+    route_by_queue = {
+        "ai_scenario": "/scenarios",
+        "data_template": "/factory",
+        "ai_monitor": "/monitor",
+        "diff_evaluate": "/import-diffs",
+        "diagnose_failure": "/executions",
+        "alert_analyze": "/monitor",
+    }
+    ref_type_by_queue = {
+        "data_template": "data_template",
+        "diff_evaluate": "import_diff",
+        "diagnose_failure": "execution",
+        "alert_analyze": "alert",
+    }
+    route_base = route_by_queue.get(queue_id, "/apis")
+    ref_type = ref_type_by_queue.get(queue_id, "api")
+    refs = []
+    for target_id in target_ids[:8]:
+        route = route_base
+        if route_base in {"/apis", "/executions"}:
+            route = f"{route_base}/{target_id}"
+        refs.append({
+            "type": ref_type,
+            "id": target_id,
+            "title": target_id,
+            "path": "",
+            "route": route,
+            "project_id": project_id,
+        })
+    return refs
+
+
 def _payload_matches_queue(payload: dict[str, Any], queue_id: str) -> bool:
     """共享 DLQ（doc/asserts/analyze）按 target_queue 精准归属，旧 payload 默认归 ai_analyze。"""
     qdef = QUEUE_DEFS[queue_id]
@@ -139,6 +183,8 @@ async def _list_dlq_items(redis, queue_id: str) -> list[dict[str, Any]]:
             "queue_key": qdef["queue_key"],
             "dlq_key": qdef["dlq_key"],
             "job_id": _job_id_for_payload(payload),
+            "target_ids": _target_ids_for_payload(payload),
+            "error_preview": str(payload.get("error", ""))[:300],
             **payload,
         })
     return items
@@ -341,19 +387,18 @@ async def _queued_jobs(redis, project_id: str, limit: int) -> list[dict[str, Any
             payload = _decode_json(raw)
             if payload.get("project_id") and payload.get("project_id") != project_id:
                 continue
+            target_ids = _target_ids_for_payload(payload)
             jobs.append({
                 "job_id": _job_id_for_payload(payload),
                 "queue": queue_id,
                 "queue_key": qdef["queue_key"],
                 "status": payload.get("status") or "queued",
                 "project_id": payload.get("project_id", project_id),
-                "target_ids": payload.get("api_ids") or [
-                    payload.get(k)
-                    for k in ("api_id", "template_id", "diff_id", "execution_id", "alert_id")
-                    if payload.get(k)
-                ],
+                "target_ids": target_ids,
                 "retry_count": payload.get("fail_count", 0),
                 "error": payload.get("error", ""),
+                "error_preview": str(payload.get("error", ""))[:300],
+                "references": _references_for_targets(target_ids, queue_id, payload.get("project_id", project_id)),
                 "payload": payload,
             })
             if len(jobs) >= limit:
@@ -367,20 +412,19 @@ async def _dlq_jobs(redis, project_id: str, limit: int) -> list[dict[str, Any]]:
         for item in await _list_dlq_items(redis, queue_id):
             if item.get("project_id") and item.get("project_id") != project_id:
                 continue
+            target_ids = _target_ids_for_payload(item)
             jobs.append({
                 "job_id": item.get("job_id"),
                 "queue": queue_id,
                 "queue_key": qdef["queue_key"],
                 "status": "dlq",
                 "project_id": item.get("project_id", project_id),
-                "target_ids": item.get("api_ids") or [
-                    item.get(k)
-                    for k in ("api_id", "template_id", "diff_id", "execution_id", "alert_id")
-                    if item.get(k)
-                ],
+                "target_ids": target_ids,
                 "retry_count": item.get("fail_count", 0),
                 "error": item.get("error", ""),
+                "error_preview": str(item.get("error", ""))[:300],
                 "dlq_index": item.get("index"),
+                "references": _references_for_targets(target_ids, queue_id, item.get("project_id", project_id)),
                 "payload": item,
             })
             if len(jobs) >= limit:
@@ -397,17 +441,26 @@ async def _generation_jobs(db: AsyncIOMotorDatabase, project_id: str, limit: int
     jobs = []
     for doc in rows:
         generation_id = str(doc.get("_id") or doc.get("id") or "")
+        target_ids = doc.get("api_ids") or ([doc.get("api_id")] if doc.get("api_id") else [])
         jobs.append({
             "job_id": doc.get("job_id", ""),
             "queue": doc.get("type", ""),
             "status": doc.get("status", "pending_review"),
             "project_id": project_id,
-            "target_ids": doc.get("api_ids") or ([doc.get("api_id")] if doc.get("api_id") else []),
+            "target_ids": target_ids,
             "generation_ids": [generation_id],
             "summary": doc.get("summary", ""),
             "created_at": doc.get("created_at"),
             "finished_at": doc.get("created_at"),
             "source": doc.get("source", ""),
+            "references": [{
+                "type": "generation",
+                "id": generation_id,
+                "title": doc.get("summary") or doc.get("type") or generation_id,
+                "path": doc.get("api_id", ""),
+                "route": "/generations?status=pending_review",
+                "project_id": project_id,
+            }],
         })
     return jobs
 
@@ -430,8 +483,11 @@ async def _persistent_jobs(db: AsyncIOMotorDatabase, project_id: str, limit: int
             "target_ids": doc.get("target_ids", []),
             "retry_count": doc.get("retry_count", 0),
             "error": doc.get("error", ""),
+            "error_preview": doc.get("error_preview") or str(doc.get("error", ""))[:300],
             "generation_ids": doc.get("generation_ids", []),
             "source": doc.get("source", ""),
+            "risk": doc.get("risk", ""),
+            "references": doc.get("references", []),
             "created_at": doc.get("created_at"),
             "updated_at": doc.get("updated_at"),
             "finished_at": doc.get("finished_at"),
@@ -501,8 +557,11 @@ async def get_ai_job(
             "target_ids": persisted.get("target_ids", []),
             "retry_count": persisted.get("retry_count", 0),
             "error": persisted.get("error", ""),
+            "error_preview": persisted.get("error_preview") or str(persisted.get("error", ""))[:300],
             "generation_ids": persisted.get("generation_ids", []),
             "source": persisted.get("source", ""),
+            "risk": persisted.get("risk", ""),
+            "references": persisted.get("references", []),
             "created_at": persisted.get("created_at"),
             "updated_at": persisted.get("updated_at"),
             "finished_at": persisted.get("finished_at"),

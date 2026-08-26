@@ -21,6 +21,10 @@
 - **持续巡检** — cron/interval 定时执行，DeepDiff 检测响应变更，多渠道告警路由
 - **越用越准** — ReMe 记忆系统跨接口学习字段模式与断言规则
 
+> 进入系统后的**概览页（Dashboard）**实时呈现 API 资产、场景、执行通过率、SLA 可用性与 AI 产出趋势。
+
+![概览页截图](docs/diagrams/overview-dashboard.png)
+
 ---
 
 ## 核心功能
@@ -90,6 +94,20 @@
 │          MongoDB 7  ·  Redis 7  ·  MinIO                │
 └─────────────────────────────────────────────────────────┘
 ```
+
+### 系统架构图
+
+![ApiPulse 系统架构](docs/diagrams/architecture.png)
+
+> 交互式版本：[打开架构图](docs/diagrams/architecture.html) — 可切换视图 / 主题、缩放、搜索、导出 PNG。
+
+### 端到端主流程
+
+从「捕获 / 导入」→「流式解析去重入库」→「AI 生成文档 / 断言 / 场景」→「审核」→「DAG 场景执行」→「定时巡检 + DeepDiff 比对」→「多渠道告警」→「四层记忆沉淀」：
+
+![ApiPulse 端到端主流程](docs/diagrams/workflow.png)
+
+> 交互式版本：[打开流程图](docs/diagrams/workflow.html)。
 
 ---
 

@@ -408,8 +408,10 @@ class MockServiceManager:
 
     def _validate_service_public_access(self, data: dict[str, Any]) -> dict[str, Any]:
         public_enabled = bool(data.get("public_enabled", False))
-        if public_enabled and not str(data.get("access_key") or "").strip():
+        access_key_enabled = bool(data.get("access_key_enabled", bool(data.get("access_key"))))
+        if public_enabled and access_key_enabled and not str(data.get("access_key") or "").strip():
             raise HTTPException(422, "Public mock service requires access_key")
+        data["access_key_enabled"] = access_key_enabled
         return data
 
     async def create_service(self, data: dict[str, Any], project_id: str, username: str = "") -> dict[str, Any]:

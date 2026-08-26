@@ -122,14 +122,56 @@
             <div class="diagnosis-actions">
               <el-button
                 v-for="link in record.diagnosis_links"
-                :key="link.execution_id + link.api_id + link.created_at"
+                :key="link.generation_id || (link.execution_id + link.api_id + link.created_at)"
                 size="small"
-                @click="$router.push(`/apis/${link.api_id}`)"
+                @click="$router.push(link.generation_id ? `/generations?status=pending_review&job_id=diagnose:${record.id}` : `/apis/${link.api_id}`)"
               >
-                查看 API
+                {{ link.generation_id ? '查看修复提案' : '查看 API' }}
               </el-button>
-              <el-button size="small" @click="$router.push('/generations?status=pending_review')">进入审核中心</el-button>
-              <el-button size="small" @click="$router.push('/import-diffs')">查看 Diff</el-button>
+              <el-button size="small" @click="$router.push(`/generations?status=pending_review&job_id=diagnose:${record.id}`)">进入审核中心</el-button>
+              <el-button v-if="record.diagnosis_links.some(l => !l.generation_id)" size="small" @click="$router.push('/import-diffs')">查看 Diff</el-button>
+            </div>
+          </div>
+          <div v-if="record.pending_repair_generations?.length" class="diagnosis-row">
+            <span class="diagnosis-label">待审核修复版本</span>
+            <div class="context-list">
+              <button
+                v-for="gen in record.pending_repair_generations"
+                :key="gen.id"
+                class="context-item"
+                @click="$router.push(`/generations?status=pending_review&job_id=${encodeURIComponent(gen.job_id || `diagnose:${record.id}`)}`)"
+              >
+                <span class="context-title">{{ gen.summary || gen.type }}</span>
+                <span class="context-meta mono">{{ gen.type }} · {{ fmt.fromNow(gen.created_at) }}</span>
+              </button>
+            </div>
+          </div>
+          <div v-if="record.related_import_diffs?.length" class="diagnosis-row">
+            <span class="diagnosis-label">相关 Import Diff</span>
+            <div class="context-list">
+              <button
+                v-for="diff in record.related_import_diffs"
+                :key="diff.id"
+                class="context-item"
+                @click="$router.push('/import-diffs')"
+              >
+                <span class="context-title">{{ diff.method }} {{ diff.api_path }}</span>
+                <span class="context-meta">{{ diff.status }} · {{ diff.fields_diff?.length || 0 }} fields</span>
+              </button>
+            </div>
+          </div>
+          <div v-if="record.similar_failures?.length" class="diagnosis-row">
+            <span class="diagnosis-label">最近同类失败</span>
+            <div class="context-list">
+              <button
+                v-for="item in record.similar_failures"
+                :key="item.id"
+                class="context-item"
+                @click="$router.push(`/executions/${item.id}`)"
+              >
+                <span class="context-title">{{ item.failure_reason || item.id }}</span>
+                <span class="context-meta">{{ item.diagnosis?.root_cause || item.diagnosis_status || 'undiagnosed' }} · {{ fmt.fromNow(item.started_at) }}</span>
+              </button>
             </div>
           </div>
         </div>
@@ -454,4 +496,17 @@ watch(() => route.params.id, () => { if (route.params.id) load() })
 .diagnosis-label { font-size: 10px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .07em; }
 .diagnosis-text { font-size: 13px; color: var(--text-2); line-height: 1.55; padding: 8px 12px; background: var(--bg-2); border-radius: var(--radius); }
 .diagnosis-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.context-list { display: flex; flex-direction: column; gap: 6px; }
+.context-item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-2); color: inherit; cursor: pointer; text-align: left;
+}
+.context-item:hover { border-color: var(--accent); background: var(--bg-hover); }
+.context-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-1); }
+.context-meta { white-space: nowrap; font-size: 11px; color: var(--text-3); }
+@media (max-width: 720px) {
+  .context-item { grid-template-columns: 1fr; gap: 2px; }
+  .context-meta { white-space: normal; }
+}
 </style>
